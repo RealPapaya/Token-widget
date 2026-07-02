@@ -309,6 +309,9 @@ function publicSettings() {
     showClaude: settings.showClaude,
     showAmberLadder: settings.showAmberLadder,
     showCodex: settings.showCodex,
+    notify: settings.notify,
+    alwaysOnTop: settings.alwaysOnTop,
+    pollMinutes: settings.pollMinutes,
   };
 }
 
@@ -459,6 +462,43 @@ ipcMain.on('open-menu', () => {
   if (menu) menu.popup({ window: win });
 });
 ipcMain.on('hide-window', () => win && win.hide());
+
+// In-app settings page writes back through here. Each key applies the same
+// side effects as its tray-menu counterpart, then re-syncs the renderer and
+// tray so both surfaces stay consistent.
+ipcMain.on('set-setting', (_e, { key, value }) => {
+  switch (key) {
+    case 'pollMinutes': {
+      const m = Math.min(60, Math.max(1, Math.round(Number(value) || 0)));
+      if (m === settings.pollMinutes) return;
+      settings.pollMinutes = m;
+      startPolling(); // restart interval at the new frequency (also polls now)
+      break;
+    }
+    case 'alwaysOnTop':
+      settings.alwaysOnTop = !!value;
+      if (win && !win.isDestroyed()) win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
+      break;
+    case 'notify':
+      settings.notify = !!value;
+      break;
+    case 'showClaude':
+      settings.showClaude = !!value;
+      break;
+    case 'showAmberLadder':
+      settings.showAmberLadder = !!value;
+      break;
+    case 'showCodex':
+      settings.showCodex = !!value;
+      pollNow();
+      break;
+    default:
+      return;
+  }
+  saveSettings();
+  pushSettings();
+  rebuildTrayMenu();
+});
 
 // ---------- app lifecycle ----------
 const gotLock = app.requestSingleInstanceLock();

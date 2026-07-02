@@ -123,6 +123,8 @@ let collapsed = false;
 let showClaude = true;
 let showAmberLadder = false;
 let showCodex = true;
+let pollMinutes = 3;
+let settingsOpen = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastCodex = null;  // latest Codex snapshot from main
 
@@ -218,7 +220,7 @@ function renderStatus() {
     const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
-    text.textContent = `已更新 ${t} · 每 3 分鐘自動更新`;
+    text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
   }
 }
 
@@ -266,9 +268,63 @@ window.widget.onSettings((s) => {
   showClaude = s.showClaude !== false;
   showAmberLadder = s.showAmberLadder === true;
   showCodex = s.showCodex !== false;
+  if (typeof s.pollMinutes === 'number') pollMinutes = s.pollMinutes;
+  syncSettingsControls(s);
   if (lastData) currentGauges = normalize(lastData);
   renderGauges();
 });
+
+// ---------- settings page ----------
+function syncSettingsControls(s) {
+  const slider = $('poll-slider');
+  if (slider && typeof s.pollMinutes === 'number') {
+    slider.value = String(s.pollMinutes);
+    $('poll-value').textContent = `${s.pollMinutes} 分鐘`;
+  }
+  const toggles = {
+    'set-showClaude': s.showClaude !== false,
+    'set-showAmberLadder': s.showAmberLadder === true,
+    'set-showCodex': s.showCodex !== false,
+    'set-notify': s.notify !== false,
+    'set-alwaysOnTop': s.alwaysOnTop !== false,
+  };
+  for (const [id, val] of Object.entries(toggles)) {
+    const el = $(id);
+    if (el) el.checked = val;
+  }
+}
+
+function applySettingsView(open) {
+  settingsOpen = open;
+  $('gauges').classList.toggle('hidden', open);
+  $('settings-view').classList.toggle('hidden', !open);
+  $('btn-refresh').classList.toggle('hidden', open);
+  $('btn-settings').title = open ? '返回' : '設定';
+  requestResize();
+}
+
+$('btn-settings').addEventListener('click', () => applySettingsView(!settingsOpen));
+
+// Live-update the label as the user drags; persist the value on release.
+$('poll-slider').addEventListener('input', (e) => {
+  $('poll-value').textContent = `${e.target.value} 分鐘`;
+});
+$('poll-slider').addEventListener('change', (e) => {
+  const m = Number(e.target.value);
+  pollMinutes = m;
+  window.widget.setSetting('pollMinutes', m);
+});
+
+const TOGGLE_KEYS = {
+  'set-showClaude': 'showClaude',
+  'set-showAmberLadder': 'showAmberLadder',
+  'set-showCodex': 'showCodex',
+  'set-notify': 'notify',
+  'set-alwaysOnTop': 'alwaysOnTop',
+};
+for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
+  $(id).addEventListener('change', (e) => window.widget.setSetting(key, e.target.checked));
+}
 
 window.widget.onUsage((payload) => {
   if ('codex' in payload) lastCodex = payload.codex;
@@ -291,7 +347,6 @@ window.widget.onUsage((payload) => {
 $('btn-collapse').addEventListener('click', () => window.widget.toggleCollapse());
 $('btn-expand').addEventListener('click', () => window.widget.toggleCollapse());
 $('btn-refresh').addEventListener('click', () => window.widget.refresh());
-$('btn-menu').addEventListener('click', () => window.widget.openMenu());
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   window.widget.openMenu();

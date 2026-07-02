@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('widget', {
   toggleCollapse: () => ipcRenderer.send('toggle-collapse'),
   refresh: () => ipcRenderer.send('refresh'),
   openMenu: () => ipcRenderer.send('open-menu'),
+  setSetting: (key, value) => ipcRenderer.send('set-setting', { key, value }),
   hide: () => ipcRenderer.send('hide-window'),
 });
