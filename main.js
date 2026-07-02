@@ -9,6 +9,7 @@ const path = require('path');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
+const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 
@@ -26,8 +27,12 @@ const DEFAULTS = {
   alwaysOnTop: true,
   openAtLogin: true,
   notify: true,
+  showClaude: true,
+  showAmberLadder: false,
+  showCodex: true,
   pollMinutes: 3,
-  pos: null, // {x, y}
+  pos: null,             // {x, y}
+  panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
 };
 let settings = { ...DEFAULTS };
 
@@ -84,15 +89,93 @@ async function fetchUsage() {
   }
 }
 
+// ---------- Codex (OpenAI) usage ----------
+// Codex CLI (auth_mode: chatgpt) persists rate-limit snapshots inside its
+// session rollout files (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) as
+// `token_count` events. `primary` = 5h window (window_minutes 300),
+// `secondary` = weekly window (10080). We read the newest snapshot; this
+// mirrors what Codex's own /status shows and needs no network call.
+function collectRolloutFiles(dir, out) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) collectRolloutFiles(p, out);
+    else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
+      try { out.push({ p, mtime: fs.statSync(p).mtimeMs }); } catch {}
+    }
+  }
+}
+
+function tailRead(file, maxBytes) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const len = size - start;
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+// Scan the newest rollout files for the most recent rate_limits snapshot.
+function latestCodexRateLimits() {
+  const files = [];
+  collectRolloutFiles(CODEX_SESSIONS_DIR, files);
+  files.sort((a, b) => b.mtime - a.mtime);
+  let best = null; // { rl, ts }
+  for (const { p } of files.slice(0, 8)) {
+    let text;
+    try { text = tailRead(p, 256 * 1024); } catch { continue; }
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line.includes('"rate_limits"')) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      const rl = obj && obj.payload && obj.payload.rate_limits;
+      if (!rl) continue;
+      const ts = Date.parse(obj.timestamp) || 0;
+      if (!best || ts > best.ts) best = { rl, ts };
+      break; // newest snapshot in this file
+    }
+  }
+  return best;
+}
+
+function readCodexUsage() {
+  const snap = latestCodexRateLimits();
+  if (!snap) return null;
+  const mk = (w) => (w && typeof w.used_percent === 'number')
+    ? { pct: w.used_percent, resetsAt: w.resets_at ? new Date(w.resets_at * 1000).toISOString() : null }
+    : null;
+  const rl = snap.rl;
+  const five = mk(rl.primary);
+  const week = mk(rl.secondary);
+  if (!five && !week) return null;
+  return { fiveHour: five, sevenDay: week, planType: rl.plan_type || null, updatedAt: snap.ts || null };
+}
+
+function codexGauges(codex) {
+  if (!codex) return [];
+  const out = [];
+  if (codex.fiveHour) out.push({ key: 'codex_five_hour', utilization: codex.fiveHour.pct, resetsAt: codex.fiveHour.resetsAt });
+  if (codex.sevenDay) out.push({ key: 'codex_seven_day', utilization: codex.sevenDay.pct, resetsAt: codex.sevenDay.resetsAt });
+  return out;
+}
+
 async function pollNow() {
   const result = await fetchUsage();
+  const codex = readCodexUsage();
   if (result.ok) {
     lastUsage = result;
-    maybeNotify(result.data);
   }
-  const payload = result.ok ? result : { ...result, stale: lastUsage };
+  maybeNotify(result.ok ? result.data : null, codex);
+  const payload = result.ok ? { ...result } : { ...result, stale: lastUsage };
+  payload.codex = codex;
   if (win && !win.isDestroyed()) win.webContents.send('usage', payload);
-  updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data));
+  updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex);
 }
 
 function startPolling() {
@@ -125,15 +208,18 @@ function severityOf(pct) {
   return 'normal';
 }
 
-function maybeNotify(data) {
+function maybeNotify(data, codex) {
   if (!settings.notify) { lastSeverity = {}; return; }
-  for (const g of extractGauges(data)) {
+  const gauges = settings.showClaude ? extractGauges(data) : [];
+  if (settings.showCodex) gauges.push(...codexGauges(codex));
+  for (const g of gauges) {
     const sev = severityOf(g.utilization);
     const prev = lastSeverity[g.key] || 'normal';
     const rank = { normal: 0, warn: 1, crit: 2 };
     if (rank[sev] > rank[prev] && Notification.isSupported()) {
+      const brand = g.key.startsWith('codex_') ? 'Codex' : 'Claude';
       new Notification({
-        title: 'Claude 用量警示',
+        title: `${brand} 用量警示`,
         body: `${g.key} 已使用 ${g.utilization.toFixed(1)}%${sev === 'crit' ? '，即將達到上限！' : ''}`,
         icon: trayIconPath(),
       }).show();
@@ -161,13 +247,15 @@ function validatePos(pos) {
 function createWindow() {
   const pos = validatePos(settings.pos);
   win = new BrowserWindow({
-    width: settings.collapsed ? WIDTH_COLLAPSED : WIDTH_EXPANDED,
+    width: settings.collapsed ? WIDTH_COLLAPSED : Math.max(WIDTH_COLLAPSED, settings.panelWidth || WIDTH_EXPANDED),
     height: settings.collapsed ? 52 : 300,
     x: pos ? pos.x : undefined,
     y: pos ? pos.y : undefined,
     frame: false,
     transparent: true,
-    resizable: false,
+    resizable: true,
+    minWidth: 200,
+    minHeight: 52,
     skipTaskbar: true,
     alwaysOnTop: settings.alwaysOnTop,
     hasShadow: false,
@@ -186,8 +274,17 @@ function createWindow() {
     saveSettings();
   });
 
+  // Persist user-adjusted width (only meaningful in expanded mode).
+  win.on('resize', () => {
+    if (win.isDestroyed() || settings.collapsed) return;
+    const [w] = win.getSize();
+    settings.panelWidth = w;
+    saveSettings();
+  });
+
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('init', { collapsed: settings.collapsed });
+    win.webContents.send('settings', publicSettings());
     pollNow();
   });
 
@@ -207,10 +304,30 @@ function createWindow() {
   }
 }
 
+function publicSettings() {
+  return {
+    showClaude: settings.showClaude,
+    showAmberLadder: settings.showAmberLadder,
+    showCodex: settings.showCodex,
+  };
+}
+
+function pushSettings() {
+  if (win && !win.isDestroyed()) win.webContents.send('settings', publicSettings());
+}
+
 function setCollapsed(collapsed) {
   settings.collapsed = collapsed;
   saveSettings();
-  if (win && !win.isDestroyed()) win.webContents.send('collapsed-changed', collapsed);
+  if (win && !win.isDestroyed()) {
+    // Restore the user's expanded width when un-collapsing; the capsule
+    // sizes itself, so we only need to guarantee width here.
+    if (!collapsed) {
+      const [, h] = win.getSize();
+      win.setSize(Math.max(WIDTH_COLLAPSED, settings.panelWidth || WIDTH_EXPANDED), h);
+    }
+    win.webContents.send('collapsed-changed', collapsed);
+  }
   rebuildTrayMenu();
 }
 
@@ -254,6 +371,37 @@ function rebuildTrayMenu() {
         saveSettings();
       },
     },
+    {
+      label: '顯示 Claude 用量',
+      type: 'checkbox',
+      checked: settings.showClaude,
+      click: (item) => {
+        settings.showClaude = item.checked;
+        saveSettings();
+        pushSettings();
+      },
+    },
+    {
+      label: '顯示 Amber Ladder',
+      type: 'checkbox',
+      checked: settings.showAmberLadder,
+      click: (item) => {
+        settings.showAmberLadder = item.checked;
+        saveSettings();
+        pushSettings();
+      },
+    },
+    {
+      label: '顯示 Codex 用量',
+      type: 'checkbox',
+      checked: settings.showCodex,
+      click: (item) => {
+        settings.showCodex = item.checked;
+        saveSettings();
+        pushSettings();
+        pollNow();
+      },
+    },
     { type: 'separator' },
     { label: '結束', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
@@ -269,9 +417,10 @@ function createTray() {
   tray.on('click', () => (win.isVisible() ? win.hide() : win.show()));
 }
 
-function updateTrayTooltip(data) {
+function updateTrayTooltip(data, codex) {
   if (!tray) return;
-  const gauges = extractGauges(data);
+  const gauges = settings.showClaude ? extractGauges(data) : [];
+  if (settings.showCodex) gauges.push(...codexGauges(codex));
   if (!gauges.length) { tray.setToolTip('Claude Usage Widget'); return; }
   const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
   tray.setToolTip(`Claude Usage — 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
@@ -295,6 +444,13 @@ ipcMain.on('resize', (_e, { width, height }) => {
   if (!win || win.isDestroyed()) return;
   const [x, y] = win.getPosition();
   win.setBounds({ x, y, width: Math.round(width), height: Math.round(height) });
+});
+// Expanded panel: fit height to content, but keep the user-controlled width.
+ipcMain.on('resize-height', (_e, { height }) => {
+  if (!win || win.isDestroyed()) return;
+  const [w] = win.getSize();
+  const [x, y] = win.getPosition();
+  win.setBounds({ x, y, width: w, height: Math.round(height) });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
 ipcMain.on('refresh', () => pollNow());

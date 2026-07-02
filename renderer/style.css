@@ -10,6 +10,7 @@
   --dim: #9B9A94;
   --warn: #F0B429;
   --crit: #E5484D;
+  --codex: #4F9CF9;
 }
 
 html, body {
@@ -28,6 +29,7 @@ html, body {
 
 /* ---------- expanded panel ---------- */
 .panel {
+  width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -46,8 +48,8 @@ html, body {
 .logo svg { width: 100%; height: 100%; }
 
 .title {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 15px;
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: 0.2px;
   flex: 1;
 }
@@ -95,7 +97,19 @@ html, body {
 }
 .fill.warn { background: var(--warn); }
 .fill.crit { background: var(--crit); animation: pulse 1.6s ease-in-out infinite; }
+.fill.codex { background: var(--codex); }
 @keyframes pulse { 50% { opacity: 0.65; } }
+
+/* inline brand logo inside a gauge label (Codex) */
+.row-logo {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  margin-right: 5px;
+  opacity: 0.9;
+}
+.row-logo svg { width: 100%; height: 100%; }
 
 .gauge-sub {
   display: flex;
