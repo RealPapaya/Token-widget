@@ -1,0 +1,15 @@
+{
+  "name": "claude-usage-widget",
+  "version": "1.0.0",
+  "description": "Windows desktop widget showing Claude Code usage limits with countdown",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "gen-icon": "node scripts/gen-tray-icon.js"
+  },
+  "author": "morris_hsueh",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
