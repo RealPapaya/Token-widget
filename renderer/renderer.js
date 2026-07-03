@@ -295,6 +295,7 @@ function syncSettingsControls(s) {
     'set-showCodex': s.showCodex !== false,
     'set-notify': s.notify !== false,
     'set-alwaysOnTop': s.alwaysOnTop !== false,
+    'set-openAtLogin': s.openAtLogin !== false,
   };
   for (const [id, val] of Object.entries(toggles)) {
     const el = $(id);
@@ -345,6 +346,7 @@ const TOGGLE_KEYS = {
   'set-showCodex': 'showCodex',
   'set-notify': 'notify',
   'set-alwaysOnTop': 'alwaysOnTop',
+  'set-openAtLogin': 'openAtLogin',
 };
 for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
   $(id).addEventListener('change', (e) => window.widget.setSetting(key, e.target.checked));

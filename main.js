@@ -382,6 +382,7 @@ function publicSettings() {
     showCodex: settings.showCodex,
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
+    openAtLogin: settings.openAtLogin,
     pollMinutes: settings.pollMinutes,
     ...detectAvailability(),
   };
@@ -431,6 +432,7 @@ function rebuildTrayMenu() {
         settings.openAtLogin = item.checked;
         saveSettings();
         applyLoginItem();
+        pushSettings();
       },
     },
     {
@@ -541,6 +543,10 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
     case 'alwaysOnTop':
       settings.alwaysOnTop = !!value;
       if (win && !win.isDestroyed()) win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
+      break;
+    case 'openAtLogin':
+      settings.openAtLogin = !!value;
+      applyLoginItem();
       break;
     case 'notify':
       settings.notify = !!value;
