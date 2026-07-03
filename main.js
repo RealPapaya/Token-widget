@@ -18,6 +18,8 @@ let tray = null;
 let pollTimer = null;
 let lastUsage = null;          // last successful payload sent to renderer
 let lastSeverity = {};         // gauge key -> 'normal' | 'warn' | 'crit' (for notifications)
+let suppressResizePersistence = false;
+let resizePersistenceTimer = null;
 const isSmokeTest = process.argv.includes('--screenshot');
 
 // ---------- settings ----------
@@ -147,9 +149,27 @@ function latestCodexRateLimits() {
 function readCodexUsage() {
   const snap = latestCodexRateLimits();
   if (!snap) return null;
-  const mk = (w) => (w && typeof w.used_percent === 'number')
-    ? { pct: w.used_percent, resetsAt: w.resets_at ? new Date(w.resets_at * 1000).toISOString() : null }
-    : null;
+  const nowSec = Date.now() / 1000;
+  // A snapshot is only rewritten when Codex is actually used, so after a window
+  // rolls over the newest snapshot still shows the pre-reset percentage. If its
+  // resets_at is already in the past, the window has reset: usage is 0 now and
+  // the next reset is one window length later. Advance until it's in the future
+  // so a manual refresh reflects the reset even without new Codex activity.
+  const mk = (w) => {
+    if (!w || typeof w.used_percent !== 'number') return null;
+    let pct = w.used_percent;
+    let resetsSec = w.resets_at || null;
+    if (resetsSec && resetsSec <= nowSec) {
+      pct = 0;
+      if (w.window_minutes > 0) {
+        const span = w.window_minutes * 60;
+        while (resetsSec <= nowSec) resetsSec += span;
+      } else {
+        resetsSec = null;
+      }
+    }
+    return { pct, resetsAt: resetsSec ? new Date(resetsSec * 1000).toISOString() : null };
+  };
   const rl = snap.rl;
   const five = mk(rl.primary);
   const week = mk(rl.secondary);
@@ -244,10 +264,38 @@ function validatePos(pos) {
   return onScreen ? pos : null;
 }
 
+function expandedWidth() {
+  return Math.max(WIDTH_COLLAPSED, Math.round(settings.panelWidth || WIDTH_EXPANDED));
+}
+
+function modeWidth() {
+  return settings.collapsed ? WIDTH_COLLAPSED : expandedWidth();
+}
+
+function markProgrammaticResize() {
+  suppressResizePersistence = true;
+  clearTimeout(resizePersistenceTimer);
+  resizePersistenceTimer = setTimeout(() => {
+    suppressResizePersistence = false;
+  }, 100);
+}
+
+function applyWidgetBounds({ width = modeWidth(), height }) {
+  if (!win || win.isDestroyed()) return;
+  const [x, y] = win.getPosition();
+  markProgrammaticResize();
+  win.setBounds({
+    x,
+    y,
+    width: Math.round(width),
+    height: Math.round(height),
+  });
+}
+
 function createWindow() {
   const pos = validatePos(settings.pos);
   win = new BrowserWindow({
-    width: settings.collapsed ? WIDTH_COLLAPSED : Math.max(WIDTH_COLLAPSED, settings.panelWidth || WIDTH_EXPANDED),
+    width: modeWidth(),
     height: settings.collapsed ? 52 : 300,
     x: pos ? pos.x : undefined,
     y: pos ? pos.y : undefined,
@@ -274,9 +322,10 @@ function createWindow() {
     saveSettings();
   });
 
-  // Persist user-adjusted width (only meaningful in expanded mode).
+  // Persist only user-adjusted width. Programmatic height fitting and mode
+  // switches must not rewrite panelWidth.
   win.on('resize', () => {
-    if (win.isDestroyed() || settings.collapsed) return;
+    if (win.isDestroyed() || settings.collapsed || suppressResizePersistence) return;
     const [w] = win.getSize();
     settings.panelWidth = w;
     saveSettings();
@@ -304,6 +353,28 @@ function createWindow() {
   }
 }
 
+// Whether each CLI is present locally. Claude = its OAuth credentials file
+// exists; Codex = at least one session rollout file exists. Used to disable the
+// matching "顯示 …" toggle when the CLI can't be detected.
+function hasCodexSessions(dir = CODEX_SESSIONS_DIR) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      if (hasCodexSessions(path.join(dir, e.name))) return true;
+    } else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
+      return true;
+    }
+  }
+  return false;
+}
+function detectAvailability() {
+  return {
+    claudeAvailable: fs.existsSync(CRED_PATH),
+    codexAvailable: hasCodexSessions(),
+  };
+}
+
 function publicSettings() {
   return {
     showClaude: settings.showClaude,
@@ -312,6 +383,7 @@ function publicSettings() {
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
     pollMinutes: settings.pollMinutes,
+    ...detectAvailability(),
   };
 }
 
@@ -323,12 +395,8 @@ function setCollapsed(collapsed) {
   settings.collapsed = collapsed;
   saveSettings();
   if (win && !win.isDestroyed()) {
-    // Restore the user's expanded width when un-collapsing; the capsule
-    // sizes itself, so we only need to guarantee width here.
-    if (!collapsed) {
-      const [, h] = win.getSize();
-      win.setSize(Math.max(WIDTH_COLLAPSED, settings.panelWidth || WIDTH_EXPANDED), h);
-    }
+    const [, h] = win.getSize();
+    applyWidgetBounds({ width: modeWidth(), height: h });
     win.webContents.send('collapsed-changed', collapsed);
   }
   rebuildTrayMenu();
@@ -444,16 +512,11 @@ function applyLoginItem() {
 
 // ---------- IPC ----------
 ipcMain.on('resize', (_e, { width, height }) => {
-  if (!win || win.isDestroyed()) return;
-  const [x, y] = win.getPosition();
-  win.setBounds({ x, y, width: Math.round(width), height: Math.round(height) });
+  applyWidgetBounds({ width: modeWidth(), height });
 });
-// Expanded panel: fit height to content, but keep the user-controlled width.
+// Renderer may request height fitting only; width is owned by the main process.
 ipcMain.on('resize-height', (_e, { height }) => {
-  if (!win || win.isDestroyed()) return;
-  const [w] = win.getSize();
-  const [x, y] = win.getPosition();
-  win.setBounds({ x, y, width: w, height: Math.round(height) });
+  applyWidgetBounds({ width: modeWidth(), height });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
 ipcMain.on('refresh', () => pollNow());

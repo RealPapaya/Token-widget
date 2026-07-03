@@ -7,7 +7,6 @@ function claudeLogoSvg() {
   return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
     `<path fill="#D97757" d="${CLAUDE_LOGO_PATH}"/></svg>`;
 }
-document.getElementById('logo-expanded').innerHTML = claudeLogoSvg();
 document.getElementById('logo-capsule').innerHTML = claudeLogoSvg();
 
 // ---------- Codex logo (official OpenAI logomark) ----------
@@ -164,9 +163,18 @@ function renderGauges() {
   if (!gauges.length) {
     box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
   }
+  let prevBrand = null;
   for (const g of gauges) {
     const sev = severityOf(g.pct);
     const isCodex = g.brand === 'codex';
+    // Divider between the Claude block and the Codex block. Sits between two
+    // gauges whose equal top/bottom padding gives it matching vertical spacing.
+    if (prevBrand && prevBrand !== g.brand) {
+      const div = document.createElement('div');
+      div.className = 'gauge-divider';
+      box.appendChild(div);
+    }
+    prevBrand = g.brand;
     const row = document.createElement('div');
     row.className = 'gauge';
 
@@ -244,7 +252,7 @@ function requestResize() {
   requestAnimationFrame(() => {
     if (collapsed) {
       const rect = $('capsule').getBoundingClientRect();
-      window.widget.resize(Math.ceil(rect.width) + 4, Math.ceil(rect.height) + 4);
+      window.widget.resizeHeight(Math.ceil(rect.height) + 4);
     } else {
       // Width is user-controlled (drag edges); only fit height to content.
       const rect = $('panel').getBoundingClientRect();
@@ -291,6 +299,22 @@ function syncSettingsControls(s) {
   for (const [id, val] of Object.entries(toggles)) {
     const el = $(id);
     if (el) el.checked = val;
+  }
+  // When a CLI isn't detected locally, its "顯示 …" toggle can't be enabled.
+  applyAvailability('set-showClaude', 'row-showClaude', s.claudeAvailable !== false);
+  applyAvailability('set-showCodex', 'row-showCodex', s.codexAvailable !== false);
+}
+
+function applyAvailability(inputId, rowId, available) {
+  const input = $(inputId);
+  const row = $(rowId);
+  if (input) {
+    input.disabled = !available;
+    if (!available) input.checked = false;
+  }
+  if (row) {
+    row.classList.toggle('disabled', !available);
+    row.title = available ? '' : '未偵測到對應的 CLI';
   }
 }
 

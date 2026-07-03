@@ -16,6 +16,7 @@
 html, body {
   background: transparent;
   overflow: hidden;
+  width: 100%;
   font-family: "Segoe UI", system-ui, sans-serif;
   color: var(--text);
   user-select: none;
@@ -52,9 +53,13 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.2px;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.header-buttons { display: flex; gap: 2px; }
+.header-buttons { display: flex; gap: 2px; flex-shrink: 0; }
 .header-buttons button {
   background: transparent;
   border: none;
@@ -70,14 +75,30 @@ html, body {
 
 /* gauge rows */
 .gauge { padding: 7px 0; }
+/* separator between the Claude block and the Codex block; the adjacent gauges'
+   equal 7px paddings give it matching space above and below. */
+.gauge-divider { border-top: 1px solid var(--border); }
 .gauge-top {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 8px;
   margin-bottom: 5px;
 }
-.gauge-label { font-size: 12.5px; font-weight: 600; }
-.gauge-pct { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--dim); }
+.gauge-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gauge-pct {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  flex-shrink: 0;
+}
 .gauge-pct.warn { color: var(--warn); font-weight: 600; }
 .gauge-pct.crit { color: var(--crit); font-weight: 700; }
 
@@ -114,10 +135,21 @@ html, body {
 .gauge-sub {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--dim);
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
+}
+.gauge-sub span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gauge-sub span:last-child {
+  text-align: right;
+  flex-shrink: 0;
 }
 
 /* ---------- settings page ---------- */
@@ -178,11 +210,20 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   font-size: 12.5px;
   padding: 6px 0;
   cursor: pointer;
 }
-.set-toggle input { accent-color: var(--orange); width: 15px; height: 15px; cursor: pointer; }
+.set-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-toggle input { accent-color: var(--orange); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+.set-toggle.disabled { opacity: 0.4; cursor: not-allowed; }
+.set-toggle.disabled input { cursor: not-allowed; }
 
 .footer {
   display: flex;
@@ -192,6 +233,12 @@ html, body {
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--dim);
+}
+#status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -204,6 +251,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 9px;
+  width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 999px;

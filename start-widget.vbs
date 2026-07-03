@@ -1,7 +1,8 @@
-' Launches the Claude Usage Widget without a console window.
-Dim shell, fso, appDir, electronExe
+' Launches the Claude Usage Widget detached from the launcher window.
+Dim shell, fso, appDir, electronExe, cmd
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 appDir = fso.GetParentFolderName(WScript.ScriptFullName)
 electronExe = appDir & "\node_modules\electron\dist\electron.exe"
-shell.Run """" & electronExe & """ """ & appDir & """", 0, False
+cmd = "cmd /c start ""Claude Usage Widget"" /d """ & appDir & """ """ & electronExe & """ """ & appDir & """"
+shell.Run cmd, 0, False
