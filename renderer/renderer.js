@@ -124,6 +124,8 @@ let showAmberLadder = false;
 let showCodex = true;
 let pollMinutes = 3;
 let settingsOpen = false;
+let sessionViewOpen = false;
+let habitViewOpen = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastCodex = null;  // latest Codex snapshot from main
 
@@ -156,6 +158,260 @@ function displayGauges() {
 
 const $ = (id) => document.getElementById(id);
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[m]));
+}
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K`;
+  return n.toLocaleString('en-US');
+}
+
+function fmtSessionTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('zh-TW', {
+    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
+function appendBrandHeader(box, brand, title) {
+  const header = document.createElement('div');
+  header.className = `brand-header ${brand}`;
+  header.innerHTML = `<span class="brand-dot"></span><span>${escapeHtml(title)}</span>`;
+  box.appendChild(header);
+}
+
+function formatPct(pct) {
+  if (typeof pct !== 'number' || !Number.isFinite(pct)) return '';
+  return `${pct.toFixed(1)}%`;
+}
+
+function normalizeHabitPct(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value < 0) return null;
+  if (value <= 1) return value * 100;
+  if (value <= 100) return value;
+  return null;
+}
+
+function textPercent(text) {
+  const match = String(text || '').match(/(\d+(?:\.\d+)?)\s*%/);
+  return match ? normalizeHabitPct(Number(match[1])) : null;
+}
+
+function habitKind(text, key) {
+  const s = `${key || ''} ${text || ''}`.toLowerCase();
+  if (s.includes('workflow-subagent')) return 'workflow-subagent';
+  if (s.includes('subagent')) return 'subagents';
+  if (s.includes('150k') || s.includes('context')) return 'large context';
+  if (s.includes('session')) return 'sessions';
+  if (s.includes('cached')) return 'cache';
+  if (s.includes('reasoning')) return 'reasoning';
+  return 'usage pattern';
+}
+
+function relevantHabitKey(key) {
+  return /habit|insight|pattern|workflow|subagent|context|session|category|breakdown|usage/i.test(key || '');
+}
+
+function collectClaudeHabits(data) {
+  const out = [];
+  const seen = new Set();
+  const add = (label, pct, kind, detail) => {
+    if (!label) return;
+    const key = `${label}|${pct ?? ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ brand: 'claude', label, pct, kind, detail: detail || kind });
+  };
+  const visit = (value, path = []) => {
+    if (!value || out.length >= 12) return;
+    const pathText = path.join(' ');
+    if (typeof value === 'string') {
+      if (relevantHabitKey(pathText) || /subagent|context|session|workflow|usage came from|usage was at/i.test(value)) {
+        add(value, textPercent(value), habitKind(value, pathText));
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, i) => visit(item, path.concat(String(i))));
+      return;
+    }
+    if (typeof value !== 'object') return;
+
+    const entries = Object.entries(value);
+    const textEntry = entries.find(([k, v]) => typeof v === 'string' && /message|description|text|label|title|name|insight|summary/i.test(k));
+    const pctEntry = entries.find(([k, v]) => typeof v === 'number' && /percent|percentage|share|ratio|fraction|utilization/i.test(k));
+    const relevant = entries.some(([k]) => relevantHabitKey(k)) || relevantHabitKey(pathText);
+    if (relevant && (textEntry || pctEntry)) {
+      const label = textEntry ? textEntry[1] : prettifyKey(path[path.length - 1] || 'usage_pattern');
+      const pct = pctEntry ? normalizeHabitPct(pctEntry[1]) : textPercent(label);
+      add(label, pct, habitKind(label, pathText));
+    }
+    for (const [k, v] of entries) {
+      if (k === 'limits' || k === 'spend' || k === 'extra_usage' || k === 'member_dashboard_available') continue;
+      if (typeof v === 'number' && relevantHabitKey(k)) add(prettifyKey(k), normalizeHabitPct(v), habitKind('', k));
+      else visit(v, path.concat(k));
+    }
+  };
+  visit(data);
+  return out;
+}
+
+function pctFromTokenSum(sessions, predicate, total) {
+  const used = sessions.filter(predicate).reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+  return total > 0 ? (used / total) * 100 : null;
+}
+
+function collectCodexHabits(codex) {
+  const data = codex && codex.sessions;
+  const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+  if (!sessions.length) return [];
+  const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+  const input = sessions.reduce((sum, s) => sum + (Number(s.inputTokens) || 0), 0);
+  const cached = sessions.reduce((sum, s) => sum + (Number(s.cachedInputTokens) || 0), 0);
+  const output = sessions.reduce((sum, s) => sum + (Number(s.outputTokens) || 0), 0);
+  const reasoning = sessions.reduce((sum, s) => sum + (Number(s.reasoningOutputTokens) || 0), 0);
+  const workflowHits = sessions.reduce((sum, s) => sum + (Number(s.workflowSubagentHits) || 0), 0);
+  const subagentHits = sessions.reduce((sum, s) => sum + (Number(s.subagentHits) || 0), 0);
+  const habits = [
+    {
+      brand: 'codex',
+      label: 'Sessions over 150k tokens/context',
+      pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
+      kind: 'large context',
+      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} of ${sessions.length} sessions`,
+    },
+    {
+      brand: 'codex',
+      label: 'Cached input tokens',
+      pct: input > 0 ? (cached / input) * 100 : null,
+      kind: 'cache',
+      detail: `${fmtTokens(cached)} of ${fmtTokens(input)} input tokens`,
+    },
+    {
+      brand: 'codex',
+      label: 'Reasoning output tokens',
+      pct: output > 0 ? (reasoning / output) * 100 : null,
+      kind: 'reasoning',
+      detail: `${fmtTokens(reasoning)} of ${fmtTokens(output)} output tokens`,
+    },
+  ];
+  if (workflowHits > 0) habits.push({
+    brand: 'codex',
+    label: 'Sessions mentioning workflow-subagent',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.workflowSubagentHits) > 0, total),
+    kind: 'workflow-subagent',
+    detail: `${workflowHits} keyword hits`,
+  });
+  if (subagentHits > 0) habits.push({
+    brand: 'codex',
+    label: 'Subagent-heavy session mentions',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.subagentHits) >= 5, total),
+    kind: 'subagents',
+    detail: `${subagentHits} keyword hits`,
+  });
+  return habits.filter((h) => h.pct == null || h.pct > 0);
+}
+
+function renderInsightRows(box, habits, brand, emptyText) {
+  appendBrandHeader(box, brand, `${brand === 'claude' ? 'Claude' : 'Codex'} usage habits`);
+  if (!habits.length) {
+    const empty = document.createElement('div');
+    empty.className = 'insight-empty';
+    empty.textContent = emptyText;
+    box.appendChild(empty);
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'insight-list';
+  for (const h of habits) {
+    const pct = typeof h.pct === 'number' ? Math.max(0, Math.min(100, h.pct)) : null;
+    const row = document.createElement('div');
+    row.className = `insight-row brand-${brand}`;
+    row.innerHTML =
+      `<div class="insight-top"><span class="insight-name">${escapeHtml(h.label)}</span>` +
+      `<span class="insight-pct">${pct == null ? '--' : formatPct(pct)}</span></div>` +
+      `<div class="insight-bar"><div style="width:${pct == null ? 0 : pct}%"></div></div>` +
+      `<div class="insight-meta"><span>${escapeHtml(h.kind || '')}</span><span>${escapeHtml(h.detail || '')}</span></div>`;
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+}
+
+function renderHabitView() {
+  const box = $('habit-view');
+  if (!box) return;
+  box.innerHTML = '';
+  if (showClaude) renderInsightRows(
+    box,
+    collectClaudeHabits(lastData),
+    'claude',
+    'No Claude usage habit categories in the current payload.',
+  );
+  if (showCodex) renderInsightRows(
+    box,
+    collectCodexHabits(lastCodex),
+    'codex',
+    'No Codex session habit data yet.',
+  );
+  if (!box.children.length) box.innerHTML = '<div class="insight-empty">No usage habits to show.</div>';
+}
+function renderSessionView() {
+  const box = $('session-view');
+  if (!box) return;
+  const data = lastCodex && lastCodex.sessions;
+  const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+  box.innerHTML = '';
+  if (!sessions.length) {
+    box.innerHTML = '<div class="session-empty">目前沒有 Codex session token 資料</div>';
+    return;
+  }
+
+  const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+  appendBrandHeader(box, 'codex', 'Codex session token share');
+  const head = document.createElement('div');
+  head.className = 'session-summary';
+  head.innerHTML = `<span>最近 ${sessions.length} 個 sessions</span><strong>${fmtTokens(total)} tokens</strong>`;
+  box.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'session-list';
+  for (const s of sessions) {
+    const pct = typeof s.share === 'number' ? s.share : (total > 0 ? (s.totalTokens / total) * 100 : 0);
+    const row = document.createElement('div');
+    row.className = 'session-row';
+    if (s.cwd) row.title = s.cwd;
+    const label = escapeHtml(s.label || s.shortId || 'Session');
+    row.innerHTML =
+      `<div class="session-top">` +
+      `<span class="session-name">${label}</span>` +
+      `<span class="session-pct">${pct.toFixed(1)}%</span>` +
+      `</div>` +
+      `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
+      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} tokens</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+}
+
+function syncMainViewVisibility() {
+  $('gauges').classList.toggle('hidden', settingsOpen || sessionViewOpen || habitViewOpen);
+  $('settings-view').classList.toggle('hidden', !settingsOpen);
+  $('session-view').classList.toggle('hidden', !sessionViewOpen);
+  $('habit-view').classList.toggle('hidden', !habitViewOpen);
+  $('btn-refresh').classList.toggle('hidden', settingsOpen);
+  $('btn-session-share').classList.toggle('hidden', settingsOpen);
+  $('btn-usage-habits').classList.toggle('hidden', settingsOpen);
+  $('btn-session-share').classList.toggle('active', sessionViewOpen);
+  $('btn-usage-habits').classList.toggle('active', habitViewOpen);
+  requestResize();
+}
 function renderGauges() {
   const box = $('gauges');
   const gauges = displayGauges();
@@ -167,16 +423,17 @@ function renderGauges() {
   for (const g of gauges) {
     const sev = severityOf(g.pct);
     const isCodex = g.brand === 'codex';
-    // Divider between the Claude block and the Codex block. Sits between two
-    // gauges whose equal top/bottom padding gives it matching vertical spacing.
-    if (prevBrand && prevBrand !== g.brand) {
-      const div = document.createElement('div');
-      div.className = 'gauge-divider';
-      box.appendChild(div);
+    if (prevBrand !== g.brand) {
+      if (prevBrand) {
+        const div = document.createElement('div');
+        div.className = 'gauge-divider';
+        box.appendChild(div);
+      }
+      appendBrandHeader(box, g.brand, `${isCodex ? 'Codex' : 'Claude'} usage limits`);
     }
     prevBrand = g.brand;
     const row = document.createElement('div');
-    row.className = 'gauge';
+    row.className = `gauge brand-${g.brand}`;
 
     let subLeft = '';
     if (g.dollars) subLeft = `${fmtMoney(g.dollars.used)} / ${fmtMoney(g.dollars.limit)}`;
@@ -193,12 +450,13 @@ function renderGauges() {
 
     // Codex bar stays blue regardless of severity; the % text still colours by severity.
     const fillClass = isCodex ? 'codex' : (sev !== 'normal' ? sev : '');
+    const pctClass = !isCodex && sev !== 'normal' ? sev : '';
     const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
 
     row.innerHTML =
       `<div class="gauge-top">` +
       `<span class="gauge-label">${logo}${g.label}</span>` +
-      `<span class="gauge-pct ${sev !== 'normal' ? sev : ''}">${g.pct.toFixed(1)}%</span>` +
+      `<span class="gauge-pct ${pctClass}">${g.pct.toFixed(1)}%</span>` +
       `</div>` +
       `<div class="bar"><div class="fill ${fillClass}" style="width:${g.pct}%"></div></div>` +
       ((subLeft || subRight)
@@ -321,14 +579,37 @@ function applyAvailability(inputId, rowId, available) {
 
 function applySettingsView(open) {
   settingsOpen = open;
-  $('gauges').classList.toggle('hidden', open);
-  $('settings-view').classList.toggle('hidden', !open);
-  $('btn-refresh').classList.toggle('hidden', open);
+  if (open) {
+    sessionViewOpen = false;
+    habitViewOpen = false;
+  }
   $('btn-settings').title = open ? '返回' : '設定';
-  requestResize();
+  syncMainViewVisibility();
+}
+
+function applySessionView(open) {
+  sessionViewOpen = open;
+  if (open) {
+    settingsOpen = false;
+    habitViewOpen = false;
+  }
+  renderSessionView();
+  syncMainViewVisibility();
+}
+
+function applyHabitView(open) {
+  habitViewOpen = open;
+  if (open) {
+    settingsOpen = false;
+    sessionViewOpen = false;
+  }
+  renderHabitView();
+  syncMainViewVisibility();
 }
 
 $('btn-settings').addEventListener('click', () => applySettingsView(!settingsOpen));
+$('btn-session-share').addEventListener('click', () => applySessionView(!sessionViewOpen));
+$('btn-usage-habits').addEventListener('click', () => applyHabitView(!habitViewOpen));
 
 // Live-update the label as the user drags; persist the value on release.
 $('poll-slider').addEventListener('input', (e) => {
@@ -368,6 +649,8 @@ window.widget.onUsage((payload) => {
     }
   }
   renderGauges();
+  if (sessionViewOpen) renderSessionView();
+  if (habitViewOpen) renderHabitView();
 });
 
 $('btn-collapse').addEventListener('click', () => window.widget.toggleCollapse());

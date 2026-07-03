@@ -13,11 +13,15 @@
       <span class="title">Your usage limits</span>
       <span class="header-buttons no-drag">
         <button id="btn-refresh" title="立即更新">&#x21bb;</button>
+        <button id="btn-session-share" title="Session token ratio">&#37;</button>
+        <button id="btn-usage-habits" title="Usage habits">H</button>
         <button id="btn-settings" title="設定">&#x2699;</button>
         <button id="btn-collapse" title="縮小">&#x2013;</button>
       </span>
     </div>
     <div id="gauges"></div>
+    <div id="session-view" class="session-view hidden no-drag"></div>
+    <div id="habit-view" class="habit-view hidden no-drag"></div>
 
     <!-- settings page (hidden by default) -->
     <div id="settings-view" class="settings hidden no-drag">
@@ -41,7 +45,7 @@
           <input type="checkbox" id="set-notify" /></label>
         <label class="set-toggle"><span>永遠置頂</span>
           <input type="checkbox" id="set-alwaysOnTop" /></label>
-        <label class="set-toggle"><span>Windows 開機自動啟動</span>
+        <label class="set-toggle"><span>開機自動啟動</span>
           <input type="checkbox" id="set-openAtLogin" /></label>
       </div>
     </div>

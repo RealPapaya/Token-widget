@@ -12,6 +12,7 @@ const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
+const CODEX_SESSION_BREAKDOWN_LIMIT = 20;
 
 let win = null;
 let tray = null;
@@ -121,6 +122,115 @@ function tailRead(file, maxBytes) {
   } finally { fs.closeSync(fd); }
 }
 
+function headRead(file, maxBytes) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, 0);
+    return buf.toString('utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+function num(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+function usageFromTokenInfo(info) {
+  const u = info && info.total_token_usage;
+  if (!u || typeof u !== 'object') return null;
+  const totalTokens = num(u.total_tokens);
+  if (totalTokens <= 0) return null;
+  return {
+    inputTokens: num(u.input_tokens),
+    cachedInputTokens: num(u.cached_input_tokens),
+    outputTokens: num(u.output_tokens),
+    reasoningOutputTokens: num(u.reasoning_output_tokens),
+    totalTokens,
+    contextWindow: num(info && info.model_context_window),
+  };
+}
+
+function parseRolloutMeta(file) {
+  let text;
+  try { text = headRead(file, 64 * 1024); } catch { return null; }
+  for (const line of text.split('\n').slice(0, 20)) {
+    if (!line.includes('"session_meta"')) continue;
+    try {
+      const obj = JSON.parse(line);
+      const payload = obj && obj.payload;
+      if (!payload) return null;
+      return {
+        id: payload.session_id || payload.id || null,
+        cwd: payload.cwd || null,
+        startedAt: payload.timestamp || obj.timestamp || null,
+      };
+    } catch { return null; }
+  }
+  return null;
+}
+
+function readRolloutSessionUsage(file, mtime) {
+  let text;
+  try { text = tailRead(file, 512 * 1024); } catch { return null; }
+  const lines = text.split('\n');
+  let usage = null;
+  let updatedAt = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.includes('"token_count"')) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const info = obj && obj.payload && obj.payload.info;
+    usage = usageFromTokenInfo(info);
+    if (usage) {
+      updatedAt = obj.timestamp || null;
+      break;
+    }
+  }
+  if (!usage) return null;
+  const subagentHits = (text.match(/subagent/gi) || []).length;
+  const workflowSubagentHits = (text.match(/workflow-subagent/gi) || []).length;
+  const meta = parseRolloutMeta(file) || {};
+  const id = meta.id || path.basename(file).replace(/^rollout-/, '').replace(/\.jsonl$/, '');
+  const cwdName = meta.cwd ? path.basename(meta.cwd) : '';
+  return {
+    id,
+    shortId: id.slice(0, 8),
+    cwd: meta.cwd || null,
+    label: cwdName || id.slice(0, 8),
+    startedAt: meta.startedAt || null,
+    updatedAt: updatedAt || new Date(mtime).toISOString(),
+    subagentHits,
+    workflowSubagentHits,
+    ...usage,
+  };
+}
+
+function codexSessionBreakdown(limit = CODEX_SESSION_BREAKDOWN_LIMIT) {
+  const files = [];
+  collectRolloutFiles(CODEX_SESSIONS_DIR, files);
+  files.sort((a, b) => b.mtime - a.mtime);
+  const sessions = [];
+  for (const f of files) {
+    const item = readRolloutSessionUsage(f.p, f.mtime);
+    if (item) sessions.push(item);
+    if (sessions.length >= limit) break;
+  }
+  sessions.sort((a, b) => b.totalTokens - a.totalTokens);
+  const totalTokens = sessions.reduce((sum, s) => sum + s.totalTokens, 0);
+  return {
+    totalTokens,
+    sessionCount: sessions.length,
+    limit,
+    sessions: sessions.map((s) => ({
+      ...s,
+      share: totalTokens > 0 ? (s.totalTokens / totalTokens) * 100 : 0,
+    })),
+  };
+}
+
 // Scan the newest rollout files for the most recent rate_limits snapshot.
 function latestCodexRateLimits() {
   const files = [];
@@ -136,7 +246,7 @@ function latestCodexRateLimits() {
       if (!line.includes('"rate_limits"')) continue;
       let obj;
       try { obj = JSON.parse(line); } catch { continue; }
-      const rl = obj && obj.payload && obj.payload.rate_limits;
+      const rl = (obj && obj.payload && obj.payload.rate_limits) || (obj && obj.rate_limits);
       if (!rl) continue;
       const ts = Date.parse(obj.timestamp) || 0;
       if (!best || ts > best.ts) best = { rl, ts };
@@ -174,7 +284,13 @@ function readCodexUsage() {
   const five = mk(rl.primary);
   const week = mk(rl.secondary);
   if (!five && !week) return null;
-  return { fiveHour: five, sevenDay: week, planType: rl.plan_type || null, updatedAt: snap.ts || null };
+  return {
+    fiveHour: five,
+    sevenDay: week,
+    planType: rl.plan_type || null,
+    updatedAt: snap.ts || null,
+    sessions: codexSessionBreakdown(),
+  };
 }
 
 function codexGauges(codex) {

@@ -72,6 +72,10 @@ html, body {
   line-height: 1;
 }
 .header-buttons button:hover { background: var(--bg-inner); color: var(--text); }
+.header-buttons button.active {
+  background: var(--bg-inner);
+  color: var(--text);
+}
 
 /* gauge rows */
 .gauge { padding: 7px 0; }
@@ -101,6 +105,28 @@ html, body {
 }
 .gauge-pct.warn { color: var(--warn); font-weight: 600; }
 .gauge-pct.crit { color: var(--crit); font-weight: 700; }
+.gauge.brand-claude .gauge-pct:not(.warn):not(.crit) { color: var(--orange); }
+.gauge.brand-codex .gauge-pct:not(.warn):not(.crit) { color: var(--codex); }
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.brand-header.claude { color: var(--orange); }
+.brand-header.codex { color: var(--codex); }
+.brand-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
 
 .bar {
   height: 7px;
@@ -152,6 +178,139 @@ html, body {
   flex-shrink: 0;
 }
 
+/* session token breakdown */
+.session-view { padding: 4px 0 7px; }
+.session-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.session-summary strong {
+  color: var(--text);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.session-list {
+  max-height: 245px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.session-list::-webkit-scrollbar { width: 5px; }
+.session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+.session-row { padding: 7px 0; }
+.session-top,
+.session-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.session-top { align-items: baseline; margin-bottom: 5px; }
+.session-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.session-pct {
+  flex-shrink: 0;
+  color: var(--codex);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.session-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.session-bar div {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--codex);
+}
+.session-meta {
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.session-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-empty {
+  padding: 14px 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+.habit-view { padding: 4px 0 7px; }
+.insight-list { padding-bottom: 2px; }
+.insight-row { padding: 7px 0; }
+.insight-top,
+.insight-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.insight-top { align-items: baseline; margin-bottom: 5px; }
+.insight-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.insight-pct {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.insight-row.brand-claude .insight-pct { color: var(--orange); }
+.insight-row.brand-codex .insight-pct { color: var(--codex); }
+.insight-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.insight-bar div {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--orange);
+}
+.insight-row.brand-codex .insight-bar div { background: var(--codex); }
+.insight-meta {
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.insight-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insight-meta span:last-child { text-align: right; flex-shrink: 0; }
+.insight-empty {
+  padding: 10px 0 12px;
+  color: var(--dim);
+  font-size: 12px;
+}
 /* ---------- settings page ---------- */
 .settings { padding: 4px 0 6px; }
 .set-group { padding: 6px 0; }
