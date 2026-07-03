@@ -5,7 +5,36 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "dist:win": "npx --yes electron-builder --win portable",
     "gen-icon": "node scripts/gen-tray-icon.js"
+  },
+  "build": {
+    "appId": "com.morrishsueh.claudeusagewidget",
+    "productName": "Claude Usage Widget",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
   },
   "author": "morris_hsueh",
   "license": "MIT",
