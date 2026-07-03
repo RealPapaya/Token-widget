@@ -178,6 +178,25 @@ function compactTaskText(text, max = 96) {
   return cleaned.length > max ? cleaned.slice(0, max - 1) + '...' : cleaned;
 }
 
+function stripPromptLeadIn(text) {
+  return String(text || '')
+    .replace(/^(?:please|pls|can you|could you|would you|help me|i need you to|i want you to|let'?s)\b[\s,:-]*/i, '')
+    .replace(/^(?:\u8acb|\u5e6b\u6211|\u5e6b\u5fd9|\u9ebb\u7169\u4f60|\u53ef\u4ee5|\u80fd\u4e0d\u80fd|\u6211\u60f3\u8981|\u6211\u8981)[\s,:\uff0c\uff1a-]*/u, '')
+    .trim();
+}
+
+function titleFromPrompt(first, latest) {
+  let text = compactTaskText(first || latest, 160);
+  if (!text) return '';
+  text = stripPromptLeadIn(text)
+    .replace(/^\/[a-z][\w-]*\s+/i, '')
+    .replace(/^#+\s*/, '')
+    .trim();
+  const sentence = text.split(/[.!?\u3002\uff01\uff1f]/u).find((part) => part.trim().length >= 8);
+  if (sentence) text = sentence.trim();
+  return compactTaskText(text, 56);
+}
+
 function taskFromPrompt(first, latest) {
   return compactTaskText(latest || first);
 }
@@ -245,11 +264,14 @@ function readRolloutSessionUsage(file, mtime) {
   const meta = parseRolloutMeta(file) || {};
   const id = meta.id || path.basename(file).replace(/^rollout-/, '').replace(/\.jsonl$/, '');
   const cwdName = meta.cwd ? path.basename(meta.cwd) : '';
+  const title = titleFromPrompt(firstPrompt, latestPrompt);
   return {
     id,
     shortId: id.slice(0, 8),
     cwd: meta.cwd || null,
-    label: cwdName || id.slice(0, 8),
+    label: title || cwdName || id.slice(0, 8),
+    projectLabel: cwdName,
+    title,
     task: taskFromPrompt(firstPrompt, latestPrompt),
     startedAt: meta.startedAt || null,
     updatedAt: updatedAt || new Date(mtime).toISOString(),
@@ -354,11 +376,14 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
   }
   if (usage.totalTokens <= 0) return null;
   const cwdName = cwd ? path.basename(cwd) : '';
+  const title = titleFromPrompt(firstPrompt, latestPrompt);
   return {
     id,
     shortId: id.slice(0, 8),
     cwd,
-    label: cwdName || id.slice(0, 8),
+    label: title || cwdName || id.slice(0, 8),
+    projectLabel: cwdName,
+    title,
     task: taskFromPrompt(firstPrompt, latestPrompt),
     startedAt,
     updatedAt: updatedAt || new Date(mtime).toISOString(),

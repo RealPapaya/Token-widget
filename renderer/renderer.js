@@ -526,8 +526,16 @@ function basenameFromPath(value) {
 function taskLabelForSession(session, mode) {
   if (mode === 'project') return '';
   const task = String(session && session.task || '').trim();
-  if (task) return task;
-  return '沒有擷取到這個階段的工作內容';
+  const title = String(session && (session.title || session.label) || '').trim();
+  if (!task || task === title) return '';
+  return task;
+}
+
+function sessionNameForRow(session, isProject) {
+  if (isProject) {
+    return session.projectLabel || basenameFromPath(session.cwd) || session.label || session.shortId || 'Project';
+  }
+  return session.title || session.label || session.projectLabel || session.shortId || 'Session';
 }
 
 function aggregateProjectSessions(sessions, brand) {
@@ -540,7 +548,7 @@ function aggregateProjectSessions(sessions, brand) {
       row = {
         id: key,
         cwd: s.cwd || null,
-        label: basenameFromPath(cwd) || s.label || s.shortId || '未命名專案',
+        label: basenameFromPath(cwd) || s.projectLabel || s.label || s.shortId || '未命名專案',
         task: '',
         startedAt: s.startedAt || null,
         updatedAt: s.updatedAt || null,
@@ -845,9 +853,9 @@ function renderSessionRows(box, rows, total, brand = 'codex', mode = 'session') 
     const row = document.createElement('div');
     row.className = `session-row brand-${brand} mode-${mode}`;
     const task = taskLabelForSession(s, mode);
-    const tooltip = [s.cwd, task].filter(Boolean).join('\n');
+    const tooltip = [isProject ? s.cwd : (s.projectLabel || s.cwd), task].filter(Boolean).join('\n');
     if (tooltip) setTooltip(row, tooltip);
-    const label = escapeHtml(s.label || s.shortId || (isProject ? '未命名專案' : '工作階段'));
+    const label = escapeHtml(sessionNameForRow(s, isProject));
     const taskHtml = task ? `<div class="session-task">${escapeHtml(task)}</div>` : '';
     const metaLeft = isProject && s.sessionCount > 1
       ? `${s.sessionCount} 個工作階段 · ${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`
