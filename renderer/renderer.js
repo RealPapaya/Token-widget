@@ -214,17 +214,55 @@ function positionTooltip(target = tooltipTarget) {
   const gap = 8;
   const rect = target.getBoundingClientRect();
   const tip = tooltipEl.getBoundingClientRect();
-  let placement = 'top';
-  let top = rect.top - gap;
-  if (top - tip.height < gap) {
-    placement = 'bottom';
-    top = rect.bottom + gap;
+  
+  let placement = target.dataset.placement || 'top';
+  
+  if (!target.dataset.placement) {
+    let top = rect.top - gap;
+    if (top - tip.height < gap) {
+      placement = 'bottom';
+    }
   }
-  let left = rect.left + rect.width / 2;
-  const half = tip.width / 2;
-  left = Math.max(gap + half, Math.min(window.innerWidth - gap - half, left));
-  if (placement === 'top') top = Math.max(gap + tip.height, top);
-  else top = Math.min(window.innerHeight - gap - tip.height, top);
+
+  let top, left;
+
+  if (placement === 'left') {
+    left = rect.left - gap;
+    top = rect.top + rect.height / 2;
+    if (left - tip.width < gap) {
+      placement = 'right';
+      left = rect.right + gap;
+    }
+  } else if (placement === 'right') {
+    left = rect.right + gap;
+    top = rect.top + rect.height / 2;
+    if (left + tip.width > window.innerWidth - gap) {
+      placement = 'left';
+      left = rect.left - gap;
+    }
+  } else if (placement === 'bottom') {
+    left = rect.left + rect.width / 2;
+    top = rect.bottom + gap;
+  } else {
+    // top
+    left = rect.left + rect.width / 2;
+    top = rect.top - gap;
+  }
+
+  if (placement === 'top' || placement === 'bottom') {
+    const half = tip.width / 2;
+    left = Math.max(gap + half, Math.min(window.innerWidth - gap - half, left));
+    if (placement === 'top') {
+      top = Math.max(gap + tip.height, top);
+    } else {
+      top = Math.min(window.innerHeight - gap - tip.height, top);
+    }
+  } else {
+    // left 或 right
+    const halfH = tip.height / 2;
+    top = Math.max(gap + halfH, Math.min(window.innerHeight - gap - halfH, top));
+  }
+
   tooltipEl.dataset.placement = placement;
   tooltipEl.style.left = `${Math.round(left)}px`;
   tooltipEl.style.top = `${Math.round(top)}px`;

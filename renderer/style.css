@@ -59,6 +59,18 @@ html, body {
 .theme-tooltip.visible[data-placement="bottom"] {
   transform: translate(-50%, 0);
 }
+.theme-tooltip[data-placement="left"] {
+  transform: translate(-100%, -50%) translateX(-4px);
+}
+.theme-tooltip.visible[data-placement="left"] {
+  transform: translate(-100%, -50%);
+}
+.theme-tooltip[data-placement="right"] {
+  transform: translate(0, -50%) translateX(4px);
+}
+.theme-tooltip.visible[data-placement="right"] {
+  transform: translate(0, -50%);
+}
 
 /* ---------- expanded panel ---------- */
 .panel {
