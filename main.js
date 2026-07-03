@@ -20,7 +20,10 @@ let pollTimer = null;
 let lastUsage = null;          // last successful payload sent to renderer
 let lastSeverity = {};         // gauge key -> 'normal' | 'warn' | 'crit' (for notifications)
 let suppressResizePersistence = false;
+let suppressMovePersistence = false;
 let resizePersistenceTimer = null;
+let movePersistenceTimer = null;
+let preferredPos = null;
 const isSmokeTest = process.argv.includes('--screenshot');
 
 // ---------- settings ----------
@@ -390,26 +393,50 @@ function modeWidth() {
 
 function markProgrammaticResize() {
   suppressResizePersistence = true;
+  suppressMovePersistence = true;
   clearTimeout(resizePersistenceTimer);
+  clearTimeout(movePersistenceTimer);
   resizePersistenceTimer = setTimeout(() => {
     suppressResizePersistence = false;
   }, 100);
+  movePersistenceTimer = setTimeout(() => {
+    suppressMovePersistence = false;
+  }, 150);
+}
+
+function clampBoundsToDisplay(bounds) {
+  const display = screen.getDisplayMatching(bounds);
+  const area = display.workArea;
+  const width = Math.min(Math.max(1, Math.round(bounds.width)), area.width);
+  const height = Math.min(Math.max(1, Math.round(bounds.height)), area.height);
+  const maxX = area.x + area.width - width;
+  const maxY = area.y + area.height - height;
+  return {
+    x: Math.min(Math.max(Math.round(bounds.x), area.x), maxX),
+    y: Math.min(Math.max(Math.round(bounds.y), area.y), maxY),
+    width,
+    height,
+  };
 }
 
 function applyWidgetBounds({ width = modeWidth(), height }) {
   if (!win || win.isDestroyed()) return;
   const [x, y] = win.getPosition();
-  markProgrammaticResize();
-  win.setBounds({
-    x,
-    y,
-    width: Math.round(width),
-    height: Math.round(height),
+  const [currentWidth, currentHeight] = win.getSize();
+  if (!preferredPos) preferredPos = settings.pos || { x, y };
+  const next = clampBoundsToDisplay({
+    x: preferredPos.x,
+    y: preferredPos.y,
+    width: width == null ? currentWidth : width,
+    height: height == null ? currentHeight : height,
   });
+  markProgrammaticResize();
+  win.setBounds(next);
 }
 
 function createWindow() {
   const pos = validatePos(settings.pos);
+  preferredPos = pos || null;
   win = new BrowserWindow({
     width: modeWidth(),
     height: settings.collapsed ? 52 : 300,
@@ -433,7 +460,9 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   win.on('moved', () => {
+    if (suppressMovePersistence) return;
     const [x, y] = win.getPosition();
+    preferredPos = { x, y };
     settings.pos = { x, y };
     saveSettings();
   });

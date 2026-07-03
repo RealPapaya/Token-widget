@@ -180,6 +180,35 @@ html, body {
 
 /* session token breakdown */
 .usage-view { padding: 4px 0 7px; }
+.usage-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 2px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-inner);
+}
+.usage-tabs button {
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.usage-tabs button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.usage-tabs button.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.10);
+}
 .analysis-category {
   padding: 10px 0 5px;
   border-top: 1px solid var(--border);

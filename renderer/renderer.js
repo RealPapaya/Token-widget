@@ -125,6 +125,7 @@ let showCodex = true;
 let pollMinutes = 3;
 let settingsOpen = false;
 let usageViewOpen = false;
+let usageAnalysisSheet = 'sessions';
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastCodex = null;  // latest Codex snapshot from main
 
@@ -190,6 +191,29 @@ function appendAnalysisCategory(box, title) {
   header.className = 'analysis-category';
   header.textContent = title;
   box.appendChild(header);
+}
+
+function appendUsageTabs(box) {
+  const tabs = document.createElement('div');
+  tabs.className = 'usage-tabs';
+  const items = [
+    ['sessions', '工作階段比例'],
+    ['habits', '使用習慣'],
+  ];
+  for (const [sheet, label] of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = sheet === usageAnalysisSheet ? 'active' : '';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      if (usageAnalysisSheet === sheet) return;
+      usageAnalysisSheet = sheet;
+      renderUsageView();
+      requestResize();
+    });
+    tabs.appendChild(btn);
+  }
+  box.appendChild(tabs);
 }
 
 function appendEmpty(box, text, className = 'insight-empty') {
@@ -354,18 +378,17 @@ function renderInsightRows(box, habits, brand, emptyText) {
 }
 
 function renderHabitSections(box) {
-  appendAnalysisCategory(box, '使用習慣');
   renderInsightRows(
     box,
     collectClaudeHabits(lastData),
     'claude',
-    '目前的 Claude 資料沒有使用習慣分類。',
+    '目前沒有 Claude 工作階段習慣資料。',
   );
   renderInsightRows(
     box,
     collectCodexHabits(lastCodex),
     'codex',
-    '目前還沒有 Codex 工作階段習慣資料。',
+    '目前沒有 Codex 工作階段習慣資料。',
   );
 }
 
@@ -396,16 +419,14 @@ function renderSessionRows(box, sessions, total) {
 }
 
 function renderSessionSections(box) {
-  appendAnalysisCategory(box, '工作階段比例');
-
   appendBrandHeader(box, 'claude', 'Claude');
-  appendEmpty(box, 'Claude 目前沒有工作階段比例明細。', 'session-empty');
+  appendEmpty(box, '目前沒有 Claude 工作階段比例明細。', 'session-empty');
 
   appendBrandHeader(box, 'codex', 'Codex');
   const data = lastCodex && lastCodex.sessions;
   const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
   if (!sessions.length) {
-    appendEmpty(box, '目前沒有 Codex 工作階段 Token 資料。', 'session-empty');
+    appendEmpty(box, '目前沒有 Codex 工作階段比例明細。', 'session-empty');
   } else {
     const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
     renderSessionRows(box, sessions, total);
@@ -416,8 +437,9 @@ function renderUsageView() {
   const box = $('usage-view');
   if (!box) return;
   box.innerHTML = '';
-  renderSessionSections(box);
-  renderHabitSections(box);
+  appendUsageTabs(box);
+  if (usageAnalysisSheet === 'habits') renderHabitSections(box);
+  else renderSessionSections(box);
   if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
 }
 function syncMainViewVisibility() {
