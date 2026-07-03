@@ -524,9 +524,10 @@ function basenameFromPath(value) {
 }
 
 function taskLabelForSession(session, mode) {
+  if (mode === 'project') return '';
   const task = String(session && session.task || '').trim();
-  if (task) return mode === 'project' && session.sessionCount > 1 ? `最近：${task}` : task;
-  return mode === 'project' ? '沒有擷取到最近工作內容' : '沒有擷取到這個階段的工作內容';
+  if (task) return task;
+  return '沒有擷取到這個階段的工作內容';
 }
 
 function aggregateProjectSessions(sessions, brand) {
@@ -842,11 +843,12 @@ function renderSessionRows(box, rows, total, brand = 'codex', mode = 'session') 
   for (const s of rows) {
     const pct = total > 0 ? ((Number(s.totalTokens) || 0) / total) * 100 : 0;
     const row = document.createElement('div');
-    row.className = `session-row brand-${brand}`;
+    row.className = `session-row brand-${brand} mode-${mode}`;
     const task = taskLabelForSession(s, mode);
-    const tooltip = [s.cwd, task].filter(Boolean).join('\\n');
+    const tooltip = [s.cwd, task].filter(Boolean).join('\n');
     if (tooltip) setTooltip(row, tooltip);
     const label = escapeHtml(s.label || s.shortId || (isProject ? '未命名專案' : '工作階段'));
+    const taskHtml = task ? `<div class="session-task">${escapeHtml(task)}</div>` : '';
     const metaLeft = isProject && s.sessionCount > 1
       ? `${s.sessionCount} 個工作階段 · ${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`
       : `${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`;
@@ -855,7 +857,7 @@ function renderSessionRows(box, rows, total, brand = 'codex', mode = 'session') 
       `<span class="session-name">${label}</span>` +
       `<span class="session-pct">${pct.toFixed(1)}%</span>` +
       `</div>` +
-      `<div class="session-task">${escapeHtml(task)}</div>` +
+      taskHtml +
       `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
       `<div class="session-meta"><span>${escapeHtml(metaLeft)}</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
     list.appendChild(row);

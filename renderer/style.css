@@ -437,6 +437,8 @@ html, body {
   border-radius: 4px;
   background: var(--codex);
 }
+.session-row.mode-session.brand-claude .session-name { color: var(--orange); }
+.session-row.mode-session.brand-codex .session-name { color: var(--codex); }
 .session-row.brand-claude .session-pct { color: var(--orange); }
 .session-row.brand-claude .session-bar div { background: var(--orange); }
 .session-meta {
