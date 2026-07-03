@@ -625,11 +625,16 @@ html, body {
   min-width: 0;
 }
 .capsule-bar {
+  display: block;
+  width: 100%;
   height: 6px;
   border-radius: 3px;
   background: var(--bg-inner);
   border: 1px solid var(--border);
   overflow: hidden;
+}
+.capsule-bar .fill {
+  display: block;
 }
 .capsule-pct {
   justify-self: end;
