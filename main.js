@@ -14,8 +14,8 @@ const CLAUDE_STATS_PATH = path.join(os.homedir(), '.claude', 'stats-cache.json')
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
-const CODEX_SESSION_BREAKDOWN_LIMIT = 20;
-const CLAUDE_SESSION_BREAKDOWN_LIMIT = 20;
+const CODEX_SESSION_BREAKDOWN_LIMIT = 240;
+const CLAUDE_SESSION_BREAKDOWN_LIMIT = 240;
 
 let win = null;
 let tray = null;

@@ -126,6 +126,7 @@ let pollMinutes = 3;
 let settingsOpen = false;
 let usageViewOpen = false;
 let usageAnalysisSheet = 'sessions';
+let usagePeriodKey = 'week';
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -257,6 +258,94 @@ function fmtTokens(n) {
   return n.toLocaleString('en-US');
 }
 
+function fmtCost(n) {
+  n = Number(n) || 0;
+  if (n >= 10) return `$${n.toFixed(1)}`;
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(4)}`;
+}
+
+const USAGE_PERIODS = [
+  { key: 'day', label: '1日', days: 1, icon: 'M12 7v5l3 2' },
+  { key: 'week', label: '1週', days: 7, icon: 'M8 2v3M16 2v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
+  { key: 'month', label: '1月', days: 30, icon: 'M4 6h16M7 3v6M17 3v6M7 13h3M14 13h3M7 17h3M14 17h3M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
+  { key: 'all', label: '全部', days: null, icon: 'M4 6h16M4 12h16M4 18h16' },
+];
+
+const CLAUDE_RATES_PER_MTOK = {
+  sonnet: { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 10, label: 'Claude Sonnet 5 估' },
+  opus: { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 25, label: 'Claude Opus 4.8 估' },
+  haiku: { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5, label: 'Claude Haiku 4.5 估' },
+  fallback: { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 10, label: 'Claude Sonnet 5 估' },
+};
+const CODEX_RATE_PER_MTOK = { input: 1.75, cacheRead: 0.175, output: 14, label: 'Codex gpt-5.3-codex 估' };
+
+function currentUsagePeriod() {
+  return USAGE_PERIODS.find((p) => p.key === usagePeriodKey) || USAGE_PERIODS[1];
+}
+
+function periodIcon(pathData) {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + pathData + '" /></svg>';
+}
+
+function sessionDateValue(session) {
+  const t = Date.parse(session && (session.updatedAt || session.startedAt));
+  return Number.isFinite(t) ? t : 0;
+}
+
+function filterSessionsByPeriod(sessions) {
+  const period = currentUsagePeriod();
+  const rows = Array.isArray(sessions) ? sessions : [];
+  if (!period.days) return rows.slice();
+  const cutoff = Date.now() - period.days * 24 * 60 * 60 * 1000;
+  return rows.filter((s) => sessionDateValue(s) >= cutoff);
+}
+
+function sessionTotal(sessions, key) {
+  return sessions.reduce((sum, s) => sum + (Number(s[key]) || 0), 0);
+}
+
+function rateForClaudeSession(session) {
+  const model = String(session && session.model || '').toLowerCase();
+  if (model.includes('opus')) return CLAUDE_RATES_PER_MTOK.opus;
+  if (model.includes('haiku')) return CLAUDE_RATES_PER_MTOK.haiku;
+  if (model.includes('sonnet')) return CLAUDE_RATES_PER_MTOK.sonnet;
+  return CLAUDE_RATES_PER_MTOK.fallback;
+}
+
+function estimateSessionCost(session, brand) {
+  const input = Number(session.inputTokens) || 0;
+  const cached = Number(session.cachedInputTokens) || 0;
+  const cacheWrite = Number(session.cacheCreationInputTokens) || 0;
+  const output = Number(session.outputTokens) || 0;
+  if (brand === 'claude') {
+    const rate = rateForClaudeSession(session);
+    return ((input * rate.input) + (cached * rate.cacheRead) + (cacheWrite * rate.cacheWrite) + (output * rate.output)) / 1000000;
+  }
+  return ((input * CODEX_RATE_PER_MTOK.input) + (cached * CODEX_RATE_PER_MTOK.cacheRead) + (output * CODEX_RATE_PER_MTOK.output)) / 1000000;
+}
+
+function estimateSessionsCost(sessions, brand) {
+  return sessions.reduce((sum, s) => sum + estimateSessionCost(s, brand), 0);
+}
+
+function costRateLabel(sessions, brand) {
+  if (brand === 'codex') return CODEX_RATE_PER_MTOK.label;
+  const labels = new Set(sessions.map((s) => rateForClaudeSession(s).label));
+  if (!labels.size) return CLAUDE_RATES_PER_MTOK.fallback.label;
+  return labels.size === 1 ? [...labels][0] : 'Claude 混合模型估';
+}
+
+function renderCostSummary(box, sessions, total, brand) {
+  const row = document.createElement('div');
+  row.className = `usage-cost brand-${brand}`;
+  const cost = estimateSessionsCost(sessions, brand);
+  row.innerHTML =
+    `<span><strong>${fmtCost(cost)}</strong><em>預估</em></span>` +
+    `<span>${fmtTokens(total)} Token · ${escapeHtml(costRateLabel(sessions, brand))}</span>`;
+  box.appendChild(row);
+}
 function fmtSessionTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -295,6 +384,7 @@ function appendUsageTabs(box) {
     btn.addEventListener('click', () => {
       if (usageAnalysisSheet === sheet) return;
       usageAnalysisSheet = sheet;
+      hideTooltip();
       renderUsageView();
       requestResize();
     });
@@ -303,6 +393,25 @@ function appendUsageTabs(box) {
   box.appendChild(tabs);
 }
 
+function appendUsagePeriodControls(box) {
+  const controls = document.createElement('div');
+  controls.className = 'usage-periods';
+  for (const period of USAGE_PERIODS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = period.key === usagePeriodKey ? 'active' : '';
+    btn.innerHTML = `${periodIcon(period.icon)}<span>${escapeHtml(period.label)}</span>`;
+    setTooltip(btn, `${period.label}內紀錄`);
+    btn.addEventListener('click', () => {
+      if (usagePeriodKey === period.key) return;
+      usagePeriodKey = period.key;
+      renderUsageView();
+      requestResize();
+    });
+    controls.appendChild(btn);
+  }
+  box.appendChild(controls);
+}
 function appendEmpty(box, text, className = 'insight-empty') {
   const empty = document.createElement('div');
   empty.className = className;
@@ -444,8 +553,81 @@ function collectCodexHabits(codex) {
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
-function renderInsightRows(box, habits, brand, emptyText) {
+function collectSessionHabits(sessions, brand) {
+  sessions = Array.isArray(sessions) ? sessions : [];
+  if (!sessions.length) return [];
+  const total = sessionTotal(sessions, 'totalTokens');
+  const input = sessionTotal(sessions, 'inputTokens');
+  const cached = sessionTotal(sessions, 'cachedInputTokens');
+  const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
+  const output = sessionTotal(sessions, 'outputTokens');
+  const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
+  const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');
+  const subagentHits = sessionTotal(sessions, 'subagentHits');
+  const expensive = sessions.filter((s) => estimateSessionCost(s, brand) >= 1);
+  const habits = [
+    {
+      brand,
+      label: '超過 150K Token / 上下文的工作階段',
+      pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
+      kind: '大型上下文',
+      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
+    },
+    {
+      brand,
+      label: '快取輸入 Token',
+      pct: input > 0 ? (cached / input) * 100 : null,
+      kind: '快取',
+      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
+    },
+    {
+      brand,
+      label: '輸出 Token 佔比',
+      pct: total > 0 ? (output / total) * 100 : null,
+      kind: '輸出',
+      detail: `${fmtTokens(output)} / ${fmtTokens(total)} Token`,
+    },
+  ];
+  if (cacheWrite > 0) habits.push({
+    brand,
+    label: '快取建立 Token',
+    pct: total > 0 ? (cacheWrite / total) * 100 : null,
+    kind: '快取',
+    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(total)} Token`,
+  });
+  if (reasoning > 0) habits.push({
+    brand,
+    label: '推理輸出 Token',
+    pct: output > 0 ? (reasoning / output) * 100 : null,
+    kind: '推理',
+    detail: `${fmtTokens(reasoning)} / ${fmtTokens(output)} 輸出 Token`,
+  });
+  if (expensive.length) habits.push({
+    brand,
+    label: '預估超過 $1 的工作階段',
+    pct: pctFromTokenSum(sessions, (s) => estimateSessionCost(s, brand) >= 1, total),
+    kind: '成本',
+    detail: `${expensive.length} / ${sessions.length} 個工作階段`,
+  });
+  if (workflowHits > 0) habits.push({
+    brand,
+    label: '提到 workflow-subagent 的工作階段',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.workflowSubagentHits) > 0, total),
+    kind: 'workflow-subagent',
+    detail: `${workflowHits} 次關鍵字命中`,
+  });
+  if (subagentHits > 0) habits.push({
+    brand,
+    label: '子代理使用較多的工作階段',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.subagentHits) >= 5, total),
+    kind: '子代理',
+    detail: `${subagentHits} 次關鍵字命中`,
+  });
+  return habits.filter((h) => h.pct == null || h.pct > 0);
+}
+function renderInsightRows(box, habits, brand, emptyText, sessions = []) {
   appendBrandHeader(box, brand, brand === 'claude' ? 'Claude' : 'Codex');
+  if (sessions.length) renderCostSummary(box, sessions, sessionTotal(sessions, 'totalTokens'), brand);
   if (!habits.length) {
     appendEmpty(box, emptyText);
     return;
@@ -467,30 +649,38 @@ function renderInsightRows(box, habits, brand, emptyText) {
 }
 
 function renderHabitSections(box) {
+  const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
+  const claudeSessions = filterSessionsByPeriod(claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : []);
   renderInsightRows(
     box,
-    collectClaudeHabits(lastData),
+    collectSessionHabits(claudeSessions, 'claude'),
     'claude',
-    '目前沒有 Claude 工作階段習慣資料。',
+    '這個期間沒有 Claude 使用習慣資料。',
+    claudeSessions,
   );
+
+  const codexData = lastCodex && lastCodex.sessions;
+  const codexSessions = filterSessionsByPeriod(codexData && Array.isArray(codexData.sessions) ? codexData.sessions : []);
   renderInsightRows(
     box,
-    collectCodexHabits(lastCodex),
+    collectSessionHabits(codexSessions, 'codex'),
     'codex',
-    '目前沒有 Codex 工作階段習慣資料。',
+    '這個期間沒有 Codex 使用習慣資料。',
+    codexSessions,
   );
 }
-
 function renderSessionRows(box, sessions, total, brand = 'codex') {
+  const period = currentUsagePeriod();
   const head = document.createElement('div');
   head.className = 'session-summary';
-  head.innerHTML = `<span>最近 ${sessions.length} 個工作階段</span><strong>${fmtTokens(total)} Token</strong>`;
+  head.innerHTML = `<span>${period.label}內 ${sessions.length} 個工作階段</span><strong>${fmtTokens(total)} · ${fmtCost(estimateSessionsCost(sessions, brand))}</strong>`;
   box.appendChild(head);
+  renderCostSummary(box, sessions, total, brand);
 
   const list = document.createElement('div');
   list.className = 'session-list';
   for (const s of sessions) {
-    const pct = typeof s.share === 'number' ? s.share : (total > 0 ? (s.totalTokens / total) * 100 : 0);
+    const pct = total > 0 ? ((Number(s.totalTokens) || 0) / total) * 100 : 0;
     const row = document.createElement('div');
     row.className = `session-row brand-${brand}`;
     if (s.cwd) setTooltip(row, s.cwd);
@@ -501,30 +691,31 @@ function renderSessionRows(box, sessions, total, brand = 'codex') {
       `<span class="session-pct">${pct.toFixed(1)}%</span>` +
       `</div>` +
       `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
-      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} Token</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
+      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
     list.appendChild(row);
   }
   box.appendChild(list);
 }
-
 function renderSessionSections(box) {
   appendBrandHeader(box, 'claude', 'Claude');
   const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
-  const claudeSessions = claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : [];
+  const claudeAll = claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : [];
+  const claudeSessions = filterSessionsByPeriod(claudeAll);
   if (!claudeSessions.length) {
-    appendEmpty(box, '目前沒有 Claude 工作階段比例明細。', 'session-empty');
+    appendEmpty(box, `這個期間沒有 Claude 工作階段比例明細。`, 'session-empty');
   } else {
-    const total = Number(claudeData.totalTokens) || claudeSessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+    const total = sessionTotal(claudeSessions, 'totalTokens');
     renderSessionRows(box, claudeSessions, total, 'claude');
   }
 
   appendBrandHeader(box, 'codex', 'Codex');
   const data = lastCodex && lastCodex.sessions;
-  const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+  const allSessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+  const sessions = filterSessionsByPeriod(allSessions);
   if (!sessions.length) {
-    appendEmpty(box, '目前沒有 Codex 工作階段比例明細。', 'session-empty');
+    appendEmpty(box, `這個期間沒有 Codex 工作階段比例明細。`, 'session-empty');
   } else {
-    const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+    const total = sessionTotal(sessions, 'totalTokens');
     renderSessionRows(box, sessions, total, 'codex');
   }
 }
@@ -533,6 +724,7 @@ function renderUsageView() {
   if (!box) return;
   box.innerHTML = '';
   appendUsageTabs(box);
+  appendUsagePeriodControls(box);
   if (usageAnalysisSheet === 'habits') renderHabitSections(box);
   else renderSessionSections(box);
   if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
