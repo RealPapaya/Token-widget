@@ -894,17 +894,28 @@ function renderCapsule(gauges) {
     .sort((a, b) => new Date(a.resetsAt) - new Date(b.resetsAt))[0];
   setTooltip($('capsule'), soonest ? `${summary} · 重置 ${fmtCountdown(soonest.resetsAt)}` : summary);
 }
-function requestResize() {
-  requestAnimationFrame(() => {
-    if (collapsed) {
-      const rect = $('capsule').getBoundingClientRect();
-      window.widget.resizeHeight(Math.ceil(rect.height) + 4);
-    } else {
-      // Width is user-controlled (drag edges); only fit height to content.
-      const rect = $('panel').getBoundingClientRect();
-      window.widget.resizeHeight(Math.ceil(rect.height) + 4);
-    }
-  });
+let resizeFrame = null;
+let resizeTimer = null;
+let lastRequestedHeight = 0;
+function requestResize(options = {}) {
+  const delay = Math.max(0, Number(options.delay) || 0);
+  const force = options.force === true;
+  clearTimeout(resizeTimer);
+  const schedule = () => {
+    if (resizeFrame != null) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null;
+      const target = collapsed ? $('capsule') : $('panel');
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const nextHeight = Math.ceil(rect.height) + 4;
+      if (!force && Math.abs(nextHeight - lastRequestedHeight) <= 1) return;
+      lastRequestedHeight = nextHeight;
+      window.widget.resizeHeight(nextHeight);
+    });
+  };
+  if (delay > 0) resizeTimer = setTimeout(schedule, delay);
+  else schedule();
 }
 
 function applyCollapsed(c) {
@@ -1054,7 +1065,7 @@ window.addEventListener('resize', () => {
   if (collapsed) return;
   if (window.innerWidth === lastWidth) return;
   lastWidth = window.innerWidth;
-  requestResize();
+  requestResize({ delay: 120 });
 });
 
 // tick countdowns locally between polls

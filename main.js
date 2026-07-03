@@ -611,6 +611,10 @@ function applyWidgetBounds({ width = modeWidth(), height }) {
     width: width == null ? currentWidth : width,
     height: height == null ? currentHeight : height,
   });
+  if (
+    next.x === x && next.y === y &&
+    next.width === currentWidth && next.height === currentHeight
+  ) return;
   markProgrammaticResize();
   win.setBounds(next);
 }
@@ -652,8 +656,10 @@ function createWindow() {
   // switches must not rewrite panelWidth.
   win.on('resize', () => {
     if (win.isDestroyed() || settings.collapsed || suppressResizePersistence) return;
-    const [w] = win.getSize();
-    settings.panelWidth = w;
+    const bounds = win.getBounds();
+    preferredPos = { x: bounds.x, y: bounds.y };
+    settings.pos = preferredPos;
+    settings.panelWidth = bounds.width;
     saveSettings();
   });
 
