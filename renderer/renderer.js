@@ -124,8 +124,7 @@ let showAmberLadder = false;
 let showCodex = true;
 let pollMinutes = 3;
 let settingsOpen = false;
-let sessionViewOpen = false;
-let habitViewOpen = false;
+let usageViewOpen = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastCodex = null;  // latest Codex snapshot from main
 
@@ -186,6 +185,19 @@ function appendBrandHeader(box, brand, title) {
   box.appendChild(header);
 }
 
+function appendAnalysisCategory(box, title) {
+  const header = document.createElement('div');
+  header.className = 'analysis-category';
+  header.textContent = title;
+  box.appendChild(header);
+}
+
+function appendEmpty(box, text, className = 'insight-empty') {
+  const empty = document.createElement('div');
+  empty.className = className;
+  empty.textContent = text;
+  box.appendChild(empty);
+}
 function formatPct(pct) {
   if (typeof pct !== 'number' || !Number.isFinite(pct)) return '';
   return `${pct.toFixed(1)}%`;
@@ -207,12 +219,12 @@ function textPercent(text) {
 function habitKind(text, key) {
   const s = `${key || ''} ${text || ''}`.toLowerCase();
   if (s.includes('workflow-subagent')) return 'workflow-subagent';
-  if (s.includes('subagent')) return 'subagents';
-  if (s.includes('150k') || s.includes('context')) return 'large context';
-  if (s.includes('session')) return 'sessions';
-  if (s.includes('cached')) return 'cache';
-  if (s.includes('reasoning')) return 'reasoning';
-  return 'usage pattern';
+  if (s.includes('subagent')) return '子代理';
+  if (s.includes('150k') || s.includes('context')) return '大型上下文';
+  if (s.includes('session')) return '工作階段';
+  if (s.includes('cached')) return '快取';
+  if (s.includes('reasoning')) return '推理';
+  return '使用模式';
 }
 
 function relevantHabitKey(key) {
@@ -282,50 +294,47 @@ function collectCodexHabits(codex) {
   const habits = [
     {
       brand: 'codex',
-      label: 'Sessions over 150k tokens/context',
+      label: '超過 150K Token / 上下文的工作階段',
       pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
-      kind: 'large context',
-      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} of ${sessions.length} sessions`,
+      kind: '大型上下文',
+      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
     },
     {
       brand: 'codex',
-      label: 'Cached input tokens',
+      label: '快取輸入 Token',
       pct: input > 0 ? (cached / input) * 100 : null,
-      kind: 'cache',
-      detail: `${fmtTokens(cached)} of ${fmtTokens(input)} input tokens`,
+      kind: '快取',
+      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
     },
     {
       brand: 'codex',
-      label: 'Reasoning output tokens',
+      label: '推理輸出 Token',
       pct: output > 0 ? (reasoning / output) * 100 : null,
-      kind: 'reasoning',
-      detail: `${fmtTokens(reasoning)} of ${fmtTokens(output)} output tokens`,
+      kind: '推理',
+      detail: `${fmtTokens(reasoning)} / ${fmtTokens(output)} 輸出 Token`,
     },
   ];
   if (workflowHits > 0) habits.push({
     brand: 'codex',
-    label: 'Sessions mentioning workflow-subagent',
+    label: '提到 workflow-subagent 的工作階段',
     pct: pctFromTokenSum(sessions, (s) => Number(s.workflowSubagentHits) > 0, total),
     kind: 'workflow-subagent',
-    detail: `${workflowHits} keyword hits`,
+    detail: `${workflowHits} 次關鍵字命中`,
   });
   if (subagentHits > 0) habits.push({
     brand: 'codex',
-    label: 'Subagent-heavy session mentions',
+    label: '子代理使用較多的工作階段',
     pct: pctFromTokenSum(sessions, (s) => Number(s.subagentHits) >= 5, total),
-    kind: 'subagents',
-    detail: `${subagentHits} keyword hits`,
+    kind: '子代理',
+    detail: `${subagentHits} 次關鍵字命中`,
   });
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
 function renderInsightRows(box, habits, brand, emptyText) {
-  appendBrandHeader(box, brand, `${brand === 'claude' ? 'Claude' : 'Codex'} usage habits`);
+  appendBrandHeader(box, brand, brand === 'claude' ? 'Claude' : 'Codex');
   if (!habits.length) {
-    const empty = document.createElement('div');
-    empty.className = 'insight-empty';
-    empty.textContent = emptyText;
-    box.appendChild(empty);
+    appendEmpty(box, emptyText);
     return;
   }
   const list = document.createElement('div');
@@ -344,40 +353,26 @@ function renderInsightRows(box, habits, brand, emptyText) {
   box.appendChild(list);
 }
 
-function renderHabitView() {
-  const box = $('habit-view');
-  if (!box) return;
-  box.innerHTML = '';
-  if (showClaude) renderInsightRows(
+function renderHabitSections(box) {
+  appendAnalysisCategory(box, '使用習慣');
+  renderInsightRows(
     box,
     collectClaudeHabits(lastData),
     'claude',
-    'No Claude usage habit categories in the current payload.',
+    '目前的 Claude 資料沒有使用習慣分類。',
   );
-  if (showCodex) renderInsightRows(
+  renderInsightRows(
     box,
     collectCodexHabits(lastCodex),
     'codex',
-    'No Codex session habit data yet.',
+    '目前還沒有 Codex 工作階段習慣資料。',
   );
-  if (!box.children.length) box.innerHTML = '<div class="insight-empty">No usage habits to show.</div>';
 }
-function renderSessionView() {
-  const box = $('session-view');
-  if (!box) return;
-  const data = lastCodex && lastCodex.sessions;
-  const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
-  box.innerHTML = '';
-  if (!sessions.length) {
-    box.innerHTML = '<div class="session-empty">目前沒有 Codex session token 資料</div>';
-    return;
-  }
 
-  const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
-  appendBrandHeader(box, 'codex', 'Codex session token share');
+function renderSessionRows(box, sessions, total) {
   const head = document.createElement('div');
   head.className = 'session-summary';
-  head.innerHTML = `<span>最近 ${sessions.length} 個 sessions</span><strong>${fmtTokens(total)} tokens</strong>`;
+  head.innerHTML = `<span>最近 ${sessions.length} 個工作階段</span><strong>${fmtTokens(total)} Token</strong>`;
   box.appendChild(head);
 
   const list = document.createElement('div');
@@ -387,29 +382,51 @@ function renderSessionView() {
     const row = document.createElement('div');
     row.className = 'session-row';
     if (s.cwd) row.title = s.cwd;
-    const label = escapeHtml(s.label || s.shortId || 'Session');
+    const label = escapeHtml(s.label || s.shortId || '工作階段');
     row.innerHTML =
       `<div class="session-top">` +
       `<span class="session-name">${label}</span>` +
       `<span class="session-pct">${pct.toFixed(1)}%</span>` +
       `</div>` +
       `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
-      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} tokens</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
+      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} Token</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
     list.appendChild(row);
   }
   box.appendChild(list);
 }
 
+function renderSessionSections(box) {
+  appendAnalysisCategory(box, '工作階段比例');
+
+  appendBrandHeader(box, 'claude', 'Claude');
+  appendEmpty(box, 'Claude 目前沒有工作階段比例明細。', 'session-empty');
+
+  appendBrandHeader(box, 'codex', 'Codex');
+  const data = lastCodex && lastCodex.sessions;
+  const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+  if (!sessions.length) {
+    appendEmpty(box, '目前沒有 Codex 工作階段 Token 資料。', 'session-empty');
+  } else {
+    const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+    renderSessionRows(box, sessions, total);
+  }
+}
+
+function renderUsageView() {
+  const box = $('usage-view');
+  if (!box) return;
+  box.innerHTML = '';
+  renderSessionSections(box);
+  renderHabitSections(box);
+  if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
+}
 function syncMainViewVisibility() {
-  $('gauges').classList.toggle('hidden', settingsOpen || sessionViewOpen || habitViewOpen);
+  $('gauges').classList.toggle('hidden', settingsOpen || usageViewOpen);
   $('settings-view').classList.toggle('hidden', !settingsOpen);
-  $('session-view').classList.toggle('hidden', !sessionViewOpen);
-  $('habit-view').classList.toggle('hidden', !habitViewOpen);
+  $('usage-view').classList.toggle('hidden', !usageViewOpen);
   $('btn-refresh').classList.toggle('hidden', settingsOpen);
-  $('btn-session-share').classList.toggle('hidden', settingsOpen);
-  $('btn-usage-habits').classList.toggle('hidden', settingsOpen);
-  $('btn-session-share').classList.toggle('active', sessionViewOpen);
-  $('btn-usage-habits').classList.toggle('active', habitViewOpen);
+  $('btn-usage-details').classList.toggle('hidden', settingsOpen);
+  $('btn-usage-details').classList.toggle('active', usageViewOpen);
   requestResize();
 }
 function renderGauges() {
@@ -580,36 +597,23 @@ function applyAvailability(inputId, rowId, available) {
 function applySettingsView(open) {
   settingsOpen = open;
   if (open) {
-    sessionViewOpen = false;
-    habitViewOpen = false;
+    usageViewOpen = false;
   }
   $('btn-settings').title = open ? '返回' : '設定';
   syncMainViewVisibility();
 }
 
-function applySessionView(open) {
-  sessionViewOpen = open;
+function applyUsageView(open) {
+  usageViewOpen = open;
   if (open) {
     settingsOpen = false;
-    habitViewOpen = false;
   }
-  renderSessionView();
-  syncMainViewVisibility();
-}
-
-function applyHabitView(open) {
-  habitViewOpen = open;
-  if (open) {
-    settingsOpen = false;
-    sessionViewOpen = false;
-  }
-  renderHabitView();
+  renderUsageView();
   syncMainViewVisibility();
 }
 
 $('btn-settings').addEventListener('click', () => applySettingsView(!settingsOpen));
-$('btn-session-share').addEventListener('click', () => applySessionView(!sessionViewOpen));
-$('btn-usage-habits').addEventListener('click', () => applyHabitView(!habitViewOpen));
+$('btn-usage-details').addEventListener('click', () => applyUsageView(!usageViewOpen));
 
 // Live-update the label as the user drags; persist the value on release.
 $('poll-slider').addEventListener('input', (e) => {
@@ -649,8 +653,7 @@ window.widget.onUsage((payload) => {
     }
   }
   renderGauges();
-  if (sessionViewOpen) renderSessionView();
-  if (habitViewOpen) renderHabitView();
+  if (usageViewOpen) renderUsageView();
 });
 
 $('btn-collapse').addEventListener('click', () => window.widget.toggleCollapse());
