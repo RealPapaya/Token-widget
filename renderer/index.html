@@ -33,6 +33,16 @@
       </div>
 
       <div class="set-group">
+        <div class="set-row">
+          <label class="set-label" for="set-displayCurrency">金額顯示幣值</label>
+          <select id="set-displayCurrency" class="set-select">
+            <option value="USD">USD</option>
+            <option value="TWD">TWD</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="set-group">
         <label class="set-toggle" id="row-showClaude"><span>顯示 Claude 用量</span>
           <input type="checkbox" id="set-showClaude" /></label>
         <label class="set-toggle" id="row-showCodex"><span>顯示 Codex 用量</span>
@@ -56,14 +66,7 @@
 
   <!-- collapsed capsule -->
   <div id="capsule" class="capsule hidden drag">
-    <span class="logo" id="logo-capsule"></span>
-    <div class="capsule-body">
-      <div class="capsule-bar"><div id="capsule-fill" class="fill"></div></div>
-      <div class="capsule-text">
-        <span id="capsule-pct">--%</span>
-        <span id="capsule-reset" class="dim"></span>
-      </div>
-    </div>
+    <div id="capsule-items" class="capsule-items"></div>
     <button id="btn-expand" class="no-drag" data-tooltip="展開" aria-label="展開">&#x2b;</button>
   </div>
 

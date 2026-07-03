@@ -7,8 +7,6 @@ function claudeLogoSvg() {
   return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
     `<path fill="#D97757" d="${CLAUDE_LOGO_PATH}"/></svg>`;
 }
-document.getElementById('logo-capsule').innerHTML = claudeLogoSvg();
-
 // ---------- Codex logo (official OpenAI logomark) ----------
 const OPENAI_LOGO_PATH = 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.1419.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z';
 function codexLogoSvg() {
@@ -35,11 +33,33 @@ function prettifyKey(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+const USD_TO_TWD = 32;
+
+function currentCurrency() {
+  return displayCurrency === 'TWD' ? 'TWD' : 'USD';
+}
+
+function convertUsd(n) {
+  const value = Number(n) || 0;
+  return currentCurrency() === 'TWD' ? value * USD_TO_TWD : value;
+}
+
+function fmtCurrencyValue(value, minDigits, maxDigits) {
+  const currency = currentCurrency();
+  return new Intl.NumberFormat(currency === 'TWD' ? 'zh-TW' : 'en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: minDigits,
+    maximumFractionDigits: maxDigits,
+  }).format(value);
+}
+
 function fmtMoney(n) {
-  return '$' + Number(n).toLocaleString('en-US', {
-    minimumFractionDigits: n % 1 ? 2 : 0,
-    maximumFractionDigits: 2,
-  });
+  const value = convertUsd(n);
+  if (currentCurrency() === 'TWD') {
+    return fmtCurrencyValue(value, value >= 10 ? 0 : 1, value >= 10 ? 0 : 2);
+  }
+  return fmtCurrencyValue(value, Number(n) % 1 ? 2 : 0, 2);
 }
 
 function fmtResetAbs(iso) {
@@ -69,6 +89,17 @@ function severityOf(pct) {
   if (pct >= 95) return 'crit';
   if (pct >= 80) return 'warn';
   return 'normal';
+}
+
+function fillClassForGauge(g) {
+  const sev = severityOf(g.pct);
+  if (sev !== 'normal') return sev;
+  return g.brand === 'codex' ? 'codex' : '';
+}
+
+function pctClassForGauge(g) {
+  const sev = severityOf(g.pct);
+  return sev === 'normal' ? '' : sev;
 }
 
 // ---------- normalize API payload into gauge list ----------
@@ -122,6 +153,7 @@ let collapsed = false;
 let showClaude = true;
 let showAmberLadder = false;
 let showCodex = true;
+let displayCurrency = 'USD';
 let pollMinutes = 3;
 let settingsOpen = false;
 let usageViewOpen = false;
@@ -259,11 +291,17 @@ function fmtTokens(n) {
 }
 
 function fmtCost(n) {
+  const value = convertUsd(n);
+  if (currentCurrency() === 'TWD') {
+    if (value >= 10) return fmtCurrencyValue(value, 0, 0);
+    if (value >= 1) return fmtCurrencyValue(value, 1, 1);
+    return fmtCurrencyValue(value, 2, 2);
+  }
   n = Number(n) || 0;
-  if (n >= 10) return `$${n.toFixed(1)}`;
-  if (n >= 1) return `$${n.toFixed(2)}`;
-  if (n >= 0.01) return `$${n.toFixed(3)}`;
-  return `$${n.toFixed(4)}`;
+  if (n >= 10) return fmtCurrencyValue(n, 1, 1);
+  if (n >= 1) return fmtCurrencyValue(n, 2, 2);
+  if (n >= 0.01) return fmtCurrencyValue(n, 3, 3);
+  return fmtCurrencyValue(n, 4, 4);
 }
 
 const USAGE_PERIODS = [
@@ -747,7 +785,6 @@ function renderGauges() {
   }
   let prevBrand = null;
   for (const g of gauges) {
-    const sev = severityOf(g.pct);
     const isCodex = g.brand === 'codex';
     if (prevBrand !== g.brand) {
       if (prevBrand) {
@@ -774,9 +811,8 @@ function renderGauges() {
       subRight = g.subtext;
     }
 
-    // Codex bar stays blue regardless of severity; the % text still colours by severity.
-    const fillClass = isCodex ? 'codex' : (sev !== 'normal' ? sev : '');
-    const pctClass = !isCodex && sev !== 'normal' ? sev : '';
+    const fillClass = fillClassForGauge(g);
+    const pctClass = pctClassForGauge(g);
     const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
 
     row.innerHTML =
@@ -816,22 +852,48 @@ function renderStatus() {
   }
 }
 
+function topGaugeByBrand(gauges) {
+  const brands = ['claude', 'codex'];
+  return brands.map((brand) => gauges
+    .filter((g) => g.brand === brand)
+    .reduce((top, g) => (!top || g.pct > top.pct ? g : top), null))
+    .filter(Boolean);
+}
+
 function renderCapsule(gauges) {
   gauges = gauges || displayGauges();
-  if (!gauges.length) return;
-  const top = gauges.reduce((a, b) => (b.pct > a.pct ? b : a));
-  const sev = severityOf(top.pct);
-  const fill = $('capsule-fill');
-  fill.style.width = `${top.pct}%`;
-  fill.className = 'fill' + (top.brand === 'codex' ? ' codex' : (sev !== 'normal' ? ' ' + sev : ''));
-  $('capsule-pct').textContent = `${top.pct.toFixed(0)}%`;
-  setTooltip($('capsule'), `${top.label}：${top.pct.toFixed(1)}%`);
+  const box = $('capsule-items');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!gauges.length) {
+    box.innerHTML = '<div class="capsule-empty">--%</div>';
+    setTooltip($('capsule'), '目前沒有可顯示的用量限制');
+    return;
+  }
+
+  const rows = topGaugeByBrand(gauges);
+  for (const g of rows) {
+    const isCodex = g.brand === 'codex';
+    const fillClass = fillClassForGauge(g);
+    const pctClass = pctClassForGauge(g);
+    const row = document.createElement('div');
+    row.className = `capsule-item brand-${g.brand}`;
+    row.innerHTML =
+      `<span class="capsule-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>` +
+      `<span class="capsule-main">` +
+      `<span class="capsule-name">${isCodex ? 'Codex' : 'Claude'}</span>` +
+      `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${g.pct}%"></span></span>` +
+      `</span>` +
+      `<span class="capsule-pct ${pctClass}">${g.pct.toFixed(0)}%</span>`;
+    box.appendChild(row);
+  }
+
+  const summary = rows.map((g) => `${g.brand === 'codex' ? 'Codex' : 'Claude'} ${g.pct.toFixed(1)}%`).join(' / ');
   const soonest = gauges
     .filter((g) => g.resetsAt && !g.oneTime)
     .sort((a, b) => new Date(a.resetsAt) - new Date(b.resetsAt))[0];
-  $('capsule-reset').textContent = soonest ? `重置 ${fmtCountdown(soonest.resetsAt)}` : '';
+  setTooltip($('capsule'), soonest ? `${summary} · 重置 ${fmtCountdown(soonest.resetsAt)}` : summary);
 }
-
 function requestResize() {
   requestAnimationFrame(() => {
     if (collapsed) {
@@ -860,10 +922,12 @@ window.widget.onSettings((s) => {
   showClaude = s.showClaude !== false;
   showAmberLadder = s.showAmberLadder === true;
   showCodex = s.showCodex !== false;
+  displayCurrency = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
   if (typeof s.pollMinutes === 'number') pollMinutes = s.pollMinutes;
   syncSettingsControls(s);
   if (lastData) currentGauges = normalize(lastData);
   renderGauges();
+  if (usageViewOpen) renderUsageView();
 });
 
 // ---------- settings page ----------
@@ -873,6 +937,8 @@ function syncSettingsControls(s) {
     slider.value = String(s.pollMinutes);
     $('poll-value').textContent = `${s.pollMinutes} 分鐘`;
   }
+  const currencySelect = $('set-displayCurrency');
+  if (currencySelect) currencySelect.value = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
   const toggles = {
     'set-showClaude': s.showClaude !== false,
     'set-showAmberLadder': s.showAmberLadder === true,
@@ -932,6 +998,13 @@ $('poll-slider').addEventListener('change', (e) => {
   const m = Number(e.target.value);
   pollMinutes = m;
   window.widget.setSetting('pollMinutes', m);
+});
+
+$('set-displayCurrency').addEventListener('change', (e) => {
+  displayCurrency = e.target.value === 'TWD' ? 'TWD' : 'USD';
+  renderGauges();
+  if (usageViewOpen) renderUsageView();
+  window.widget.setSetting('displayCurrency', displayCurrency);
 });
 
 const TOGGLE_KEYS = {

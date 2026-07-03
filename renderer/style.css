@@ -493,6 +493,19 @@ html, body {
   color: var(--orange);
   font-variant-numeric: tabular-nums;
 }
+.set-select {
+  height: 26px;
+  min-width: 82px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(28, 28, 26, 0.98);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  outline: none;
+}
+.set-select:focus { border-color: rgba(217, 119, 87, 0.55); }
 
 /* range slider (bar) */
 .slider {
@@ -569,31 +582,69 @@ html, body {
 .capsule {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 8px 12px;
+  border-radius: 18px;
+  padding: 8px 10px 8px 12px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
 }
-.capsule .logo { width: 20px; height: 20px; flex-shrink: 0; }
-
-.capsule-body { flex: 1; min-width: 0; }
+.capsule-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.capsule-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 35px;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+.capsule-logo {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.capsule-logo svg { width: 100%; height: 100%; }
+.capsule-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--orange);
+}
+.capsule-item.brand-codex .capsule-name { color: var(--codex); }
+.capsule-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
 .capsule-bar {
   height: 6px;
   border-radius: 3px;
   background: var(--bg-inner);
   border: 1px solid var(--border);
   overflow: hidden;
-  margin-bottom: 3px;
 }
-.capsule-text {
-  display: flex;
-  justify-content: space-between;
+.capsule-pct {
+  justify-self: end;
+  color: var(--orange);
   font-size: 10.5px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.capsule-item.brand-codex .capsule-pct { color: var(--codex); }
+.capsule-item .capsule-pct.warn { color: var(--warn); }
+.capsule-item .capsule-pct.crit { color: var(--crit); }
+.capsule-empty {
+  color: var(--dim);
+  font-size: 11px;
 }
 
 #btn-expand {

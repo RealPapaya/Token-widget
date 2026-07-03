@@ -39,6 +39,7 @@ const DEFAULTS = {
   showClaude: true,
   showAmberLadder: false,
   showCodex: true,
+  displayCurrency: 'USD',
   pollMinutes: 3,
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
@@ -705,6 +706,7 @@ function publicSettings() {
     showClaude: settings.showClaude,
     showAmberLadder: settings.showAmberLadder,
     showCodex: settings.showCodex,
+    displayCurrency: settings.displayCurrency === 'TWD' ? 'TWD' : 'USD',
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
     openAtLogin: settings.openAtLogin,
@@ -800,6 +802,33 @@ function rebuildTrayMenu() {
         pollNow();
       },
     },
+    {
+      label: '金額幣值',
+      submenu: [
+        {
+          label: 'USD',
+          type: 'radio',
+          checked: settings.displayCurrency !== 'TWD',
+          click: () => {
+            settings.displayCurrency = 'USD';
+            saveSettings();
+            pushSettings();
+            rebuildTrayMenu();
+          },
+        },
+        {
+          label: 'TWD',
+          type: 'radio',
+          checked: settings.displayCurrency === 'TWD',
+          click: () => {
+            settings.displayCurrency = 'TWD';
+            saveSettings();
+            pushSettings();
+            rebuildTrayMenu();
+          },
+        },
+      ],
+    },
     { type: 'separator' },
     { label: '結束', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
@@ -885,6 +914,9 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
     case 'showCodex':
       settings.showCodex = !!value;
       pollNow();
+      break;
+    case 'displayCurrency':
+      settings.displayCurrency = value === 'TWD' ? 'TWD' : 'USD';
       break;
     default:
       return;
