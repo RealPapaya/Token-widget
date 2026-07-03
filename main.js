@@ -9,10 +9,13 @@ const path = require('path');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
+const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CLAUDE_STATS_PATH = path.join(os.homedir(), '.claude', 'stats-cache.json');
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 const CODEX_SESSION_BREAKDOWN_LIMIT = 20;
+const CLAUDE_SESSION_BREAKDOWN_LIMIT = 20;
 
 let win = null;
 let tray = null;
@@ -233,6 +236,181 @@ function codexSessionBreakdown(limit = CODEX_SESSION_BREAKDOWN_LIMIT) {
     })),
   };
 }
+function collectClaudeTranscriptFiles(dir, out) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) collectClaudeTranscriptFiles(p, out);
+    else if (e.isFile() && e.name.endsWith('.jsonl')) {
+      try { out.push({ p, mtime: fs.statSync(p).mtimeMs }); } catch {}
+    }
+  }
+}
+
+function claudeMessageUsage(message) {
+  const u = message && message.usage;
+  if (!u || typeof u !== 'object') return null;
+  const inputTokens = num(u.input_tokens);
+  const cachedInputTokens = num(u.cache_read_input_tokens);
+  const cacheCreationInputTokens = num(u.cache_creation_input_tokens);
+  const outputTokens = num(u.output_tokens);
+  const totalTokens = inputTokens + cachedInputTokens + cacheCreationInputTokens + outputTokens;
+  if (totalTokens <= 0) return null;
+  return { inputTokens, cachedInputTokens, cacheCreationInputTokens, outputTokens, totalTokens };
+}
+
+function readClaudeTranscriptSessionUsage(file, mtime) {
+  let text;
+  try { text = tailRead(file, 2 * 1024 * 1024); } catch { return null; }
+  const lines = text.split('\n');
+  const usage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  let id = path.basename(file).replace(/\.jsonl$/, '');
+  let cwd = null;
+  let updatedAt = null;
+  let startedAt = null;
+  let model = null;
+  let assistantTurns = 0;
+  for (const line of lines) {
+    if (!line.trim() || !line.includes('"message"')) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (obj.sessionId) id = obj.sessionId;
+    if (obj.cwd) cwd = obj.cwd;
+    if (obj.timestamp) {
+      if (!startedAt) startedAt = obj.timestamp;
+      updatedAt = obj.timestamp;
+    }
+    if (obj.type !== 'assistant') continue;
+    if (obj.message && obj.message.model) model = obj.message.model;
+    const u = claudeMessageUsage(obj.message);
+    if (!u) continue;
+    assistantTurns += 1;
+    usage.inputTokens += u.inputTokens;
+    usage.cachedInputTokens += u.cachedInputTokens;
+    usage.cacheCreationInputTokens += u.cacheCreationInputTokens;
+    usage.outputTokens += u.outputTokens;
+    usage.totalTokens += u.totalTokens;
+  }
+  if (usage.totalTokens <= 0) return null;
+  const cwdName = cwd ? path.basename(cwd) : '';
+  return {
+    id,
+    shortId: id.slice(0, 8),
+    cwd,
+    label: cwdName || id.slice(0, 8),
+    startedAt,
+    updatedAt: updatedAt || new Date(mtime).toISOString(),
+    model,
+    assistantTurns,
+    ...usage,
+  };
+}
+
+function claudeSessionBreakdown(limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
+  const files = [];
+  collectClaudeTranscriptFiles(CLAUDE_PROJECTS_DIR, files);
+  files.sort((a, b) => b.mtime - a.mtime);
+  const sessions = [];
+  for (const f of files) {
+    const item = readClaudeTranscriptSessionUsage(f.p, f.mtime);
+    if (item) sessions.push(item);
+    if (sessions.length >= limit) break;
+  }
+  sessions.sort((a, b) => b.totalTokens - a.totalTokens);
+  const totalTokens = sessions.reduce((sum, s) => sum + s.totalTokens, 0);
+  return {
+    totalTokens,
+    sessionCount: sessions.length,
+    limit,
+    sessions: sessions.map((s) => ({
+      ...s,
+      share: totalTokens > 0 ? (s.totalTokens / totalTokens) * 100 : 0,
+    })),
+  };
+}
+
+function modelDisplayName(model) {
+  return String(model || '').replace(/^claude-/, '').replace(/-/g, ' ');
+}
+
+function readClaudeStatsHabits() {
+  let stats;
+  try { stats = JSON.parse(fs.readFileSync(CLAUDE_STATS_PATH, 'utf8')); } catch { return []; }
+  const habits = [];
+  const models = stats && stats.modelUsage && typeof stats.modelUsage === 'object' ? stats.modelUsage : {};
+  const modelRows = Object.entries(models).map(([model, u]) => {
+    const total = num(u.inputTokens) + num(u.cacheReadInputTokens) + num(u.cacheCreationInputTokens) + num(u.outputTokens);
+    return { model, total };
+  }).filter((row) => row.total > 0).sort((a, b) => b.total - a.total);
+  const modelTotal = modelRows.reduce((sum, row) => sum + row.total, 0);
+  for (const row of modelRows.slice(0, 3)) {
+    habits.push({
+      label: `${modelDisplayName(row.model)} 使用比例`,
+      pct: modelTotal > 0 ? (row.total / modelTotal) * 100 : null,
+      kind: '模型',
+      detail: fmtCompactTokens(row.total),
+    });
+  }
+  const tokenTotals = Object.values(models).reduce((sum, u) => ({
+    input: sum.input + num(u.inputTokens),
+    cached: sum.cached + num(u.cacheReadInputTokens),
+    created: sum.created + num(u.cacheCreationInputTokens),
+    output: sum.output + num(u.outputTokens),
+  }), { input: 0, cached: 0, created: 0, output: 0 });
+  const allTokens = tokenTotals.input + tokenTotals.cached + tokenTotals.created + tokenTotals.output;
+  if (allTokens > 0) {
+    habits.push({
+      label: '快取讀取 Token',
+      pct: (tokenTotals.cached / allTokens) * 100,
+      kind: '快取',
+      detail: `${fmtCompactTokens(tokenTotals.cached)} / ${fmtCompactTokens(allTokens)} Token`,
+    });
+    habits.push({
+      label: '輸出 Token',
+      pct: (tokenTotals.output / allTokens) * 100,
+      kind: '輸出',
+      detail: `${fmtCompactTokens(tokenTotals.output)} / ${fmtCompactTokens(allTokens)} Token`,
+    });
+  }
+  const hours = stats && stats.hourCounts && typeof stats.hourCounts === 'object' ? stats.hourCounts : {};
+  const hourRows = Object.entries(hours)
+    .map(([hour, count]) => ({ hour: Number(hour), count: num(count) }))
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const hourTotal = hourRows.reduce((sum, row) => sum + row.count, 0);
+  if (hourRows.length && hourTotal > 0) {
+    const top = hourRows[0];
+    habits.push({
+      label: `${String(top.hour).padStart(2, '0')}:00 時段最常使用`,
+      pct: (top.count / hourTotal) * 100,
+      kind: '時段',
+      detail: `${top.count} / ${hourTotal} 則訊息`,
+    });
+  }
+  return habits;
+}
+
+function fmtCompactTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K`;
+  return String(n);
+}
+
+function readClaudeLocalUsage() {
+  const sessions = claudeSessionBreakdown();
+  return {
+    sessions,
+    habits: readClaudeStatsHabits(),
+  };
+}
 
 // Scan the newest rollout files for the most recent rate_limits snapshot.
 function latestCodexRateLimits() {
@@ -307,11 +485,13 @@ function codexGauges(codex) {
 async function pollNow() {
   const result = await fetchUsage();
   const codex = readCodexUsage();
+  const claudeLocal = readClaudeLocalUsage();
   if (result.ok) {
     lastUsage = result;
   }
   maybeNotify(result.ok ? result.data : null, codex);
   const payload = result.ok ? { ...result } : { ...result, stale: lastUsage };
+  payload.claudeLocal = claudeLocal;
   payload.codex = codex;
   if (win && !win.isDestroyed()) win.webContents.send('usage', payload);
   updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex);

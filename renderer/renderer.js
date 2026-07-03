@@ -127,6 +127,7 @@ let settingsOpen = false;
 let usageViewOpen = false;
 let usageAnalysisSheet = 'sessions';
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
+let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
 
 // Build gauge rows for Codex (OpenAI) usage. Same shape as normalize()'s rows,
@@ -256,6 +257,8 @@ function relevantHabitKey(key) {
 }
 
 function collectClaudeHabits(data) {
+  const local = lastClaudeLocal && Array.isArray(lastClaudeLocal.habits) ? lastClaudeLocal.habits : [];
+  if (local.length) return local.map((h) => ({ brand: 'claude', ...h }));
   const out = [];
   const seen = new Set();
   const add = (label, pct, kind, detail) => {
@@ -392,7 +395,7 @@ function renderHabitSections(box) {
   );
 }
 
-function renderSessionRows(box, sessions, total) {
+function renderSessionRows(box, sessions, total, brand = 'codex') {
   const head = document.createElement('div');
   head.className = 'session-summary';
   head.innerHTML = `<span>最近 ${sessions.length} 個工作階段</span><strong>${fmtTokens(total)} Token</strong>`;
@@ -403,7 +406,7 @@ function renderSessionRows(box, sessions, total) {
   for (const s of sessions) {
     const pct = typeof s.share === 'number' ? s.share : (total > 0 ? (s.totalTokens / total) * 100 : 0);
     const row = document.createElement('div');
-    row.className = 'session-row';
+    row.className = `session-row brand-${brand}`;
     if (s.cwd) row.title = s.cwd;
     const label = escapeHtml(s.label || s.shortId || '工作階段');
     row.innerHTML =
@@ -420,7 +423,14 @@ function renderSessionRows(box, sessions, total) {
 
 function renderSessionSections(box) {
   appendBrandHeader(box, 'claude', 'Claude');
-  appendEmpty(box, '目前沒有 Claude 工作階段比例明細。', 'session-empty');
+  const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
+  const claudeSessions = claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : [];
+  if (!claudeSessions.length) {
+    appendEmpty(box, '目前沒有 Claude 工作階段比例明細。', 'session-empty');
+  } else {
+    const total = Number(claudeData.totalTokens) || claudeSessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
+    renderSessionRows(box, claudeSessions, total, 'claude');
+  }
 
   appendBrandHeader(box, 'codex', 'Codex');
   const data = lastCodex && lastCodex.sessions;
@@ -429,10 +439,9 @@ function renderSessionSections(box) {
     appendEmpty(box, '目前沒有 Codex 工作階段比例明細。', 'session-empty');
   } else {
     const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
-    renderSessionRows(box, sessions, total);
+    renderSessionRows(box, sessions, total, 'codex');
   }
 }
-
 function renderUsageView() {
   const box = $('usage-view');
   if (!box) return;
@@ -660,6 +669,7 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 }
 
 window.widget.onUsage((payload) => {
+  if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
   if (payload.ok) {
     lastError = null;
