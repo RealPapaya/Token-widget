@@ -1,4 +1,5 @@
 node_modules/
 dist/
+/Claude Usage Widget.exe
 *.log
 .gemini/

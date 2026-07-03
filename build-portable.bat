@@ -29,5 +29,5 @@ if errorlevel 1 (
 )
 
 echo.
-echo Done. The portable EXE is in the dist folder.
+echo Done. Open Claude Usage Widget.exe from this folder.
 pause
