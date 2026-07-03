@@ -28,6 +28,38 @@ html, body {
 .no-drag { -webkit-app-region: no-drag; }
 .dim { color: var(--dim); }
 
+.theme-tooltip {
+  position: fixed;
+  z-index: 20;
+  max-width: min(260px, calc(100vw - 20px));
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(28, 28, 26, 0.98);
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -100%) translateY(-4px);
+  transition: opacity 90ms ease, transform 90ms ease;
+}
+.theme-tooltip.visible {
+  opacity: 1;
+  transform: translate(-50%, -100%);
+}
+.theme-tooltip[data-placement="bottom"] {
+  transform: translate(-50%, 0) translateY(4px);
+}
+.theme-tooltip.visible[data-placement="bottom"] {
+  transform: translate(-50%, 0);
+}
+
 /* ---------- expanded panel ---------- */
 .panel {
   width: 100%;
@@ -298,7 +330,14 @@ html, body {
 }
 .usage-view .analysis-category + .brand-header { margin-top: 0; }
 .usage-view .brand-header:not(:first-child) { margin-top: 8px; }
-.insight-list { padding-bottom: 2px; }
+.insight-list {
+  max-height: 245px;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 2px;
+}
+.insight-list::-webkit-scrollbar { width: 5px; }
+.insight-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
 .insight-row { padding: 7px 0; }
 .insight-top,
 .insight-meta {

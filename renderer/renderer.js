@@ -159,6 +159,92 @@ function displayGauges() {
 
 const $ = (id) => document.getElementById(id);
 
+let tooltipEl = null;
+let tooltipTarget = null;
+
+function ensureTooltip() {
+  if (tooltipEl) return tooltipEl;
+  tooltipEl = document.createElement('div');
+  tooltipEl.id = 'theme-tooltip';
+  tooltipEl.className = 'theme-tooltip';
+  document.body.appendChild(tooltipEl);
+  return tooltipEl;
+}
+
+function hideTooltip() {
+  if (tooltipEl) tooltipEl.classList.remove('visible');
+  tooltipTarget = null;
+}
+
+function positionTooltip(target = tooltipTarget) {
+  if (!tooltipEl || !target || !tooltipEl.classList.contains('visible')) return;
+  const gap = 8;
+  const rect = target.getBoundingClientRect();
+  const tip = tooltipEl.getBoundingClientRect();
+  let placement = 'top';
+  let top = rect.top - gap;
+  if (top - tip.height < gap) {
+    placement = 'bottom';
+    top = rect.bottom + gap;
+  }
+  let left = rect.left + rect.width / 2;
+  const half = tip.width / 2;
+  left = Math.max(gap + half, Math.min(window.innerWidth - gap - half, left));
+  if (placement === 'top') top = Math.max(gap + tip.height, top);
+  else top = Math.min(window.innerHeight - gap - tip.height, top);
+  tooltipEl.dataset.placement = placement;
+  tooltipEl.style.left = `${Math.round(left)}px`;
+  tooltipEl.style.top = `${Math.round(top)}px`;
+}
+
+function showTooltip(target) {
+  const text = target && target.dataset ? target.dataset.tooltip : '';
+  if (!text) return;
+  ensureTooltip().textContent = text;
+  tooltipTarget = target;
+  tooltipEl.classList.add('visible');
+  requestAnimationFrame(() => positionTooltip(target));
+}
+
+function setTooltip(el, text) {
+  if (!el) return;
+  el.removeAttribute('title');
+  const value = String(text || '').trim();
+  if (!value) {
+    el.removeAttribute('data-tooltip');
+    el.removeAttribute('aria-label');
+    if (tooltipTarget === el) hideTooltip();
+    return;
+  }
+  el.dataset.tooltip = value;
+  el.setAttribute('aria-label', value);
+}
+
+function hydrateTooltips(root = document) {
+  root.querySelectorAll('[title]').forEach((el) => setTooltip(el, el.getAttribute('title')));
+}
+
+hydrateTooltips();
+
+document.addEventListener('pointerover', (e) => {
+  const target = e.target.closest('[data-tooltip], [title]');
+  if (!target) return;
+  if (target.hasAttribute('title')) setTooltip(target, target.getAttribute('title'));
+  showTooltip(target);
+});
+document.addEventListener('pointermove', () => positionTooltip());
+document.addEventListener('pointerout', (e) => {
+  if (tooltipTarget && !tooltipTarget.contains(e.relatedTarget)) hideTooltip();
+});
+document.addEventListener('focusin', (e) => {
+  const target = e.target.closest('[data-tooltip], [title]');
+  if (!target) return;
+  if (target.hasAttribute('title')) setTooltip(target, target.getAttribute('title'));
+  showTooltip(target);
+});
+document.addEventListener('focusout', () => hideTooltip());
+window.addEventListener('resize', () => hideTooltip());
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (m) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -407,7 +493,7 @@ function renderSessionRows(box, sessions, total, brand = 'codex') {
     const pct = typeof s.share === 'number' ? s.share : (total > 0 ? (s.totalTokens / total) * 100 : 0);
     const row = document.createElement('div');
     row.className = `session-row brand-${brand}`;
-    if (s.cwd) row.title = s.cwd;
+    if (s.cwd) setTooltip(row, s.cwd);
     const label = escapeHtml(s.label || s.shortId || '工作階段');
     row.innerHTML =
       `<div class="session-top">` +
@@ -547,7 +633,7 @@ function renderCapsule(gauges) {
   fill.style.width = `${top.pct}%`;
   fill.className = 'fill' + (top.brand === 'codex' ? ' codex' : (sev !== 'normal' ? ' ' + sev : ''));
   $('capsule-pct').textContent = `${top.pct.toFixed(0)}%`;
-  $('capsule').title = `${top.label}：${top.pct.toFixed(1)}%`;
+  setTooltip($('capsule'), `${top.label}：${top.pct.toFixed(1)}%`);
   const soonest = gauges
     .filter((g) => g.resetsAt && !g.oneTime)
     .sort((a, b) => new Date(a.resetsAt) - new Date(b.resetsAt))[0];
@@ -621,7 +707,7 @@ function applyAvailability(inputId, rowId, available) {
   }
   if (row) {
     row.classList.toggle('disabled', !available);
-    row.title = available ? '' : '未偵測到對應的 CLI';
+    setTooltip(row, available ? '' : '未偵測到對應的 CLI');
   }
 }
 
@@ -630,7 +716,7 @@ function applySettingsView(open) {
   if (open) {
     usageViewOpen = false;
   }
-  $('btn-settings').title = open ? '返回' : '設定';
+  setTooltip($('btn-settings'), open ? '返回' : '設定');
   syncMainViewVisibility();
 }
 

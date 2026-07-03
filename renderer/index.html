@@ -12,10 +12,10 @@
     <div class="header drag">
       <span class="title">Your usage limits</span>
       <span class="header-buttons no-drag">
-        <button id="btn-refresh" title="立即更新">&#x21bb;</button>
-        <button id="btn-usage-details" title="用量分析">&#37;</button>
-        <button id="btn-settings" title="設定">&#x2699;</button>
-        <button id="btn-collapse" title="縮小">&#x2013;</button>
+        <button id="btn-refresh" data-tooltip="立即更新" aria-label="立即更新">&#x21bb;</button>
+        <button id="btn-usage-details" data-tooltip="用量分析" aria-label="用量分析">&#37;</button>
+        <button id="btn-settings" data-tooltip="設定" aria-label="設定">&#x2699;</button>
+        <button id="btn-collapse" data-tooltip="縮小" aria-label="縮小">&#x2013;</button>
       </span>
     </div>
     <div id="gauges"></div>
@@ -64,7 +64,7 @@
         <span id="capsule-reset" class="dim"></span>
       </div>
     </div>
-    <button id="btn-expand" class="no-drag" title="展開">&#x2b;</button>
+    <button id="btn-expand" class="no-drag" data-tooltip="展開" aria-label="展開">&#x2b;</button>
   </div>
 
   <script src="renderer.js"></script>
