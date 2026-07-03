@@ -159,6 +159,7 @@ let settingsOpen = false;
 let usageViewOpen = false;
 let usageAnalysisSheet = 'sessions';
 let usagePeriodKey = 'week';
+let usageSessionMode = 'project';
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -391,6 +392,7 @@ function rateForClaudeSession(session) {
 }
 
 function estimateSessionCost(session, brand) {
+  if (typeof session.costUsd === 'number' && Number.isFinite(session.costUsd)) return session.costUsd;
   const input = Number(session.inputTokens) || 0;
   const cached = Number(session.cachedInputTokens) || 0;
   const cacheWrite = Number(session.cacheCreationInputTokens) || 0;
@@ -407,6 +409,9 @@ function estimateSessionsCost(sessions, brand) {
 }
 
 function costRateLabel(sessions, brand) {
+  if (sessions.some((s) => typeof s.costUsd === 'number' && Number.isFinite(s.costUsd))) {
+    return brand === 'codex' ? CODEX_RATE_PER_MTOK.label : 'Claude 依工作階段加總估';
+  }
   if (brand === 'codex') return CODEX_RATE_PER_MTOK.label;
   const labels = new Set(sessions.map((s) => rateForClaudeSession(s).label));
   if (!labels.size) return CLAUDE_RATES_PER_MTOK.fallback.label;
@@ -488,6 +493,84 @@ function appendUsagePeriodControls(box) {
   }
   box.appendChild(controls);
 }
+function appendSessionModeControls(box) {
+  const controls = document.createElement('div');
+  controls.className = 'usage-session-modes';
+  const items = [
+    ['project', '專案'],
+    ['session', '工作階段'],
+  ];
+  for (const [mode, label] of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = mode === usageSessionMode ? 'active' : '';
+    btn.textContent = label;
+    setTooltip(btn, mode === 'project' ? '同一個檔案位置合併計算' : '每個工作階段分開計算');
+    btn.addEventListener('click', () => {
+      if (usageSessionMode === mode) return;
+      usageSessionMode = mode;
+      hideTooltip();
+      renderUsageView();
+      requestResize();
+    });
+    controls.appendChild(btn);
+  }
+  box.appendChild(controls);
+}
+
+function basenameFromPath(value) {
+  const parts = String(value || '').split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
+
+function taskLabelForSession(session, mode) {
+  const task = String(session && session.task || '').trim();
+  if (task) return mode === 'project' && session.sessionCount > 1 ? `最近：${task}` : task;
+  return mode === 'project' ? '沒有擷取到最近工作內容' : '沒有擷取到這個階段的工作內容';
+}
+
+function aggregateProjectSessions(sessions, brand) {
+  const projects = new Map();
+  for (const s of sessions) {
+    const cwd = s.cwd || '';
+    const key = cwd || `session:${s.id || s.shortId || projects.size}`;
+    let row = projects.get(key);
+    if (!row) {
+      row = {
+        id: key,
+        cwd: s.cwd || null,
+        label: basenameFromPath(cwd) || s.label || s.shortId || '未命名專案',
+        task: '',
+        startedAt: s.startedAt || null,
+        updatedAt: s.updatedAt || null,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        sessionCount: 0,
+      };
+      projects.set(key, row);
+    }
+    row.inputTokens += Number(s.inputTokens) || 0;
+    row.cachedInputTokens += Number(s.cachedInputTokens) || 0;
+    row.cacheCreationInputTokens += Number(s.cacheCreationInputTokens) || 0;
+    row.outputTokens += Number(s.outputTokens) || 0;
+    row.reasoningOutputTokens += Number(s.reasoningOutputTokens) || 0;
+    row.totalTokens += Number(s.totalTokens) || 0;
+    row.costUsd += estimateSessionCost(s, brand);
+    row.sessionCount += 1;
+    if (!row.startedAt || sessionDateValue(s) < sessionDateValue(row)) row.startedAt = s.startedAt || row.startedAt;
+    if (sessionDateValue(s) >= sessionDateValue(row)) {
+      row.updatedAt = s.updatedAt || row.updatedAt;
+      if (s.task) row.task = s.task;
+    }
+  }
+  return [...projects.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+}
+
 function appendEmpty(box, text, className = 'insight-empty') {
   const empty = document.createElement('div');
   empty.className = className;
@@ -745,54 +828,64 @@ function renderHabitSections(box) {
     codexSessions,
   );
 }
-function renderSessionRows(box, sessions, total, brand = 'codex') {
+function renderSessionRows(box, rows, total, brand = 'codex', mode = 'session') {
   const period = currentUsagePeriod();
+  const isProject = mode === 'project';
   const head = document.createElement('div');
   head.className = 'session-summary';
-  head.innerHTML = `<span>${period.label}內 ${sessions.length} 個工作階段</span><strong>${fmtTokens(total)} · ${fmtCost(estimateSessionsCost(sessions, brand))}</strong>`;
+  head.innerHTML = `<span>${period.label}內 ${rows.length} 個${isProject ? '專案' : '工作階段'}</span><strong>${fmtTokens(total)} · ${fmtCost(estimateSessionsCost(rows, brand))}</strong>`;
   box.appendChild(head);
-  renderCostSummary(box, sessions, total, brand);
+  renderCostSummary(box, rows, total, brand);
 
   const list = document.createElement('div');
   list.className = 'session-list';
-  for (const s of sessions) {
+  for (const s of rows) {
     const pct = total > 0 ? ((Number(s.totalTokens) || 0) / total) * 100 : 0;
     const row = document.createElement('div');
     row.className = `session-row brand-${brand}`;
-    if (s.cwd) setTooltip(row, s.cwd);
-    const label = escapeHtml(s.label || s.shortId || '工作階段');
+    const task = taskLabelForSession(s, mode);
+    const tooltip = [s.cwd, task].filter(Boolean).join('\\n');
+    if (tooltip) setTooltip(row, tooltip);
+    const label = escapeHtml(s.label || s.shortId || (isProject ? '未命名專案' : '工作階段'));
+    const metaLeft = isProject && s.sessionCount > 1
+      ? `${s.sessionCount} 個工作階段 · ${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`
+      : `${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`;
     row.innerHTML =
       `<div class="session-top">` +
       `<span class="session-name">${label}</span>` +
       `<span class="session-pct">${pct.toFixed(1)}%</span>` +
       `</div>` +
+      `<div class="session-task">${escapeHtml(task)}</div>` +
       `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
-      `<div class="session-meta"><span>${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
+      `<div class="session-meta"><span>${escapeHtml(metaLeft)}</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
     list.appendChild(row);
   }
   box.appendChild(list);
 }
 function renderSessionSections(box) {
+  appendSessionModeControls(box);
   appendBrandHeader(box, 'claude', 'Claude');
   const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
   const claudeAll = claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : [];
   const claudeSessions = filterSessionsByPeriod(claudeAll);
-  if (!claudeSessions.length) {
-    appendEmpty(box, `這個期間沒有 Claude 工作階段比例明細。`, 'session-empty');
+  const claudeRows = usageSessionMode === 'project' ? aggregateProjectSessions(claudeSessions, 'claude') : claudeSessions;
+  if (!claudeRows.length) {
+    appendEmpty(box, `這個期間沒有 Claude ${usageSessionMode === 'project' ? '專案' : '工作階段'}比例明細。`, 'session-empty');
   } else {
-    const total = sessionTotal(claudeSessions, 'totalTokens');
-    renderSessionRows(box, claudeSessions, total, 'claude');
+    const total = sessionTotal(claudeRows, 'totalTokens');
+    renderSessionRows(box, claudeRows, total, 'claude', usageSessionMode);
   }
 
   appendBrandHeader(box, 'codex', 'Codex');
   const data = lastCodex && lastCodex.sessions;
   const allSessions = data && Array.isArray(data.sessions) ? data.sessions : [];
   const sessions = filterSessionsByPeriod(allSessions);
-  if (!sessions.length) {
-    appendEmpty(box, `這個期間沒有 Codex 工作階段比例明細。`, 'session-empty');
+  const rows = usageSessionMode === 'project' ? aggregateProjectSessions(sessions, 'codex') : sessions;
+  if (!rows.length) {
+    appendEmpty(box, `這個期間沒有 Codex ${usageSessionMode === 'project' ? '專案' : '工作階段'}比例明細。`, 'session-empty');
   } else {
-    const total = sessionTotal(sessions, 'totalTokens');
-    renderSessionRows(box, sessions, total, 'codex');
+    const total = sessionTotal(rows, 'totalTokens');
+    renderSessionRows(box, rows, total, 'codex', usageSessionMode);
   }
 }
 function renderUsageView() {
@@ -809,8 +902,6 @@ function syncMainViewVisibility() {
   $('gauges').classList.toggle('hidden', settingsOpen || usageViewOpen);
   $('settings-view').classList.toggle('hidden', !settingsOpen);
   $('usage-view').classList.toggle('hidden', !usageViewOpen);
-  $('btn-refresh').classList.toggle('hidden', settingsOpen);
-  $('btn-usage-details').classList.toggle('hidden', settingsOpen);
   $('btn-usage-details').classList.toggle('active', usageViewOpen);
   requestResize();
 }

@@ -293,6 +293,32 @@ html, body {
   stroke-linejoin: round;
   flex-shrink: 0;
 }
+.usage-session-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 0 0 8px;
+}
+.usage-session-modes button {
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.usage-session-modes button:hover {
+  color: var(--text);
+  background: var(--bg-inner);
+}
+.usage-session-modes button.active {
+  color: var(--text);
+  border-color: rgba(217, 119, 87, 0.42);
+  background: rgba(217, 119, 87, 0.14);
+}
 .usage-cost {
   display: flex;
   justify-content: space-between;
@@ -371,7 +397,19 @@ html, body {
   justify-content: space-between;
   gap: 8px;
 }
-.session-top { align-items: baseline; margin-bottom: 5px; }
+.session-top { align-items: baseline; margin-bottom: 4px; }
+.session-task {
+  margin: 0 0 5px;
+  color: var(--text);
+  opacity: 0.86;
+  font-size: 11.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 .session-name {
   min-width: 0;
   overflow: hidden;

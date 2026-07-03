@@ -159,6 +159,29 @@ function usageFromTokenInfo(info) {
   };
 }
 
+function textFromContent(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(textFromContent).filter(Boolean).join(' ');
+  if (!value || typeof value !== 'object') return '';
+  if (typeof value.text === 'string') return value.text;
+  if (typeof value.content === 'string' || Array.isArray(value.content)) return textFromContent(value.content);
+  if (typeof value.message === 'string' || Array.isArray(value.message)) return textFromContent(value.message);
+  return '';
+}
+
+function compactTaskText(text, max = 96) {
+  const cleaned = String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^["']+|["']+$/g, '')
+    .trim();
+  if (!cleaned) return '';
+  return cleaned.length > max ? cleaned.slice(0, max - 1) + '...' : cleaned;
+}
+
+function taskFromPrompt(first, latest) {
+  return compactTaskText(latest || first);
+}
+
 function parseRolloutMeta(file) {
   let text;
   try { text = headRead(file, 64 * 1024); } catch { return null; }
@@ -184,6 +207,8 @@ function readRolloutSessionUsage(file, mtime) {
   const lines = text.split('\n');
   let usage = null;
   let updatedAt = null;
+  let firstPrompt = '';
+  let latestPrompt = '';
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line.includes('"token_count"')) continue;
@@ -196,6 +221,24 @@ function readRolloutSessionUsage(file, mtime) {
       break;
     }
   }
+  for (const line of lines) {
+    if (!line.includes('\"user\"') && !line.includes('\"message\"')) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const payload = obj && obj.payload;
+    const role = obj.role || (payload && payload.role) || (payload && payload.type);
+    if (role && !String(role).includes('user')) continue;
+    const prompt = compactTaskText(
+      textFromContent(obj.message) ||
+      textFromContent(obj.content) ||
+      textFromContent(payload && payload.message) ||
+      textFromContent(payload && payload.content),
+      140,
+    );
+    if (!prompt || prompt === 'user') continue;
+    if (!firstPrompt) firstPrompt = prompt;
+    latestPrompt = prompt;
+  }
   if (!usage) return null;
   const subagentHits = (text.match(/subagent/gi) || []).length;
   const workflowSubagentHits = (text.match(/workflow-subagent/gi) || []).length;
@@ -207,6 +250,7 @@ function readRolloutSessionUsage(file, mtime) {
     shortId: id.slice(0, 8),
     cwd: meta.cwd || null,
     label: cwdName || id.slice(0, 8),
+    task: taskFromPrompt(firstPrompt, latestPrompt),
     startedAt: meta.startedAt || null,
     updatedAt: updatedAt || new Date(mtime).toISOString(),
     subagentHits,
@@ -278,6 +322,8 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
   let startedAt = null;
   let model = null;
   let assistantTurns = 0;
+  let firstPrompt = '';
+  let latestPrompt = '';
   for (const line of lines) {
     if (!line.trim() || !line.includes('"message"')) continue;
     let obj;
@@ -287,6 +333,13 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
     if (obj.timestamp) {
       if (!startedAt) startedAt = obj.timestamp;
       updatedAt = obj.timestamp;
+    }
+    if (obj.type === 'user') {
+      const prompt = compactTaskText(textFromContent(obj.message && obj.message.content), 140);
+      if (prompt) {
+        if (!firstPrompt) firstPrompt = prompt;
+        latestPrompt = prompt;
+      }
     }
     if (obj.type !== 'assistant') continue;
     if (obj.message && obj.message.model) model = obj.message.model;
@@ -306,6 +359,7 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
     shortId: id.slice(0, 8),
     cwd,
     label: cwdName || id.slice(0, 8),
+    task: taskFromPrompt(firstPrompt, latestPrompt),
     startedAt,
     updatedAt: updatedAt || new Date(mtime).toISOString(),
     model,
