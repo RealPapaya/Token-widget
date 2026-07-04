@@ -11,14 +11,14 @@ Windows 桌面小工具，用來顯示 Claude Code / Codex 的用量狀態、倒
 3. 在 Assets 下載 `Claude Usage Widget.exe`。
 4. 直接執行，不需要另外安裝 Node.js、npm 或 `node_modules`。
 
-如果 Releases 頁面還是空的，代表尚未推送版本 tag。建立第一個 Release：
+推到 `main` / `master` 後，GitHub Actions 會自動建立或更新 `latest` Release。若要建立正式版本 Release，推一個 `v*` tag：
 
 ```powershell
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub Actions 會自動建置 Windows portable EXE，並把 `Claude Usage Widget.exe` 放到 Release Assets。
+GitHub Actions 會自動建置 Windows portable EXE，並把 `Claude Usage Widget.exe` 放到 Release Assets。GitHub 首頁右側的 Releases 區塊會在第一個 Release 建立後自動顯示並更新。
 
 ## Windows SmartScreen
 

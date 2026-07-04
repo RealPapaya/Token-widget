@@ -40,7 +40,32 @@ jobs:
           path: "Claude Usage Widget.exe"
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Move latest tag
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f latest $env:GITHUB_SHA
+          git push origin latest --force
+
+      - name: Update latest GitHub Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Windows Build
+          files: "Claude Usage Widget.exe"
+          overwrite_files: true
+          make_latest: true
+          body: |
+            Automatic Windows portable build from the latest main/master commit.
+
+            Download `Claude Usage Widget.exe` from Assets and run it directly on Windows.
+
+            Windows SmartScreen may warn on first launch because this build is not code-signed yet. Use "More info" -> "Run anyway" only if you downloaded the file from this Release.
+
+      - name: Create versioned GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
