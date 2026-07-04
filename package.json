@@ -23,6 +23,7 @@
     ],
     "asar": true,
     "win": {
+      "artifactName": "${productName}.${ext}",
       "target": [
         {
           "target": "portable",
@@ -31,9 +32,6 @@
           ]
         }
       ]
-    },
-    "portable": {
-      "artifactName": "${productName}.${ext}"
     }
   },
   "author": "morris_hsueh",

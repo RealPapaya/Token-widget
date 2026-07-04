@@ -47,6 +47,8 @@ jobs:
           files: "Claude Usage Widget.exe"
           generate_release_notes: true
           body: |
-            Windows portable build.
+            Windows portable build for Claude Usage Widget.
 
-            Download the `.exe` from Assets and run it directly on Windows.
+            Download `Claude Usage Widget.exe` from Assets and run it directly on Windows.
+
+            Windows SmartScreen may warn on first launch because this build is not code-signed yet. Use "More info" -> "Run anyway" only if you downloaded the file from this Release.

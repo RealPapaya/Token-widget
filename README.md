@@ -1,76 +1,89 @@
 # Claude Usage Widget
 
-Windows 桌面小工具：顯示 Claude Code 的用量限制（Your usage limits），含進度條、重置倒數與確切重置時間。同時支援 Enterprise（金額制預算）與個人方案（5 小時 session / weekly 百分比）——依 API 實際回傳的欄位動態渲染。
+Windows 桌面小工具，用來顯示 Claude Code / Codex 的用量狀態、倒數時間與簡易告警。
 
-## 資料來源
+[下載最新版 EXE](https://github.com/RealPapaya/Token-widget/releases/latest/download/Claude%20Usage%20Widget.exe) | [查看所有 Releases](https://github.com/RealPapaya/Token-widget/releases) | [GitHub Actions 建置紀錄](https://github.com/RealPapaya/Token-widget/actions)
 
-讀取 `~/.claude/.credentials.json` 的 OAuth token，呼叫官方 `https://api.anthropic.com/api/oauth/usage`（與 Claude Code 內建 `/usage` 指令同一來源）。**每 3 分鐘自動更新**，喚醒（睡眠恢復）時也會立即更新。Token 不會離開本機，只用於呼叫 Anthropic 官方 API。
+## 下載
 
-Token 由 Claude Code 自行維護更新；若 widget 顯示「Token 已過期」，開啟一次 Claude Code 即可。
+1. 到 [Releases](https://github.com/RealPapaya/Token-widget/releases)。
+2. 打開最新版本。
+3. 在 Assets 下載 `Claude Usage Widget.exe`。
+4. 直接執行，不需要另外安裝 Node.js、npm 或 `node_modules`。
 
-### Codex（OpenAI）用量
-
-若偵測到 OpenAI Codex CLI（`~/.codex`），會額外顯示 Codex 的 **5 小時 Session** 與 **本週用量**（藍色進度條、OpenAI logo 標示）。資料來自 Codex session rollout 檔（`~/.codex/sessions/**/rollout-*.jsonl`）裡最新的 `rate_limits` 快照——與 Codex 自身 `/status` 同源，不需額外呼叫網路。快照的新鮮度取決於 Codex 上次呼叫 API 的時間。可在選單以「顯示 Codex 用量」開關。
-
-## 啟動
-
-- 給一般使用者：下載或取得根目錄最明顯的 `Claude Usage Widget.exe`，在 Windows 上雙擊即可使用，不需要 Node.js、npm、`node_modules` 或 `.vbs`。
-- 開發機產生使用者版本：雙擊 `build-portable.bat`。完成後根目錄會出現 `Claude Usage Widget.exe`。
-- 開發/本機執行：雙擊 `start-widget.bat`。如果還沒有 `node_modules`，它會先執行 `npm install`，再啟動 widget。
-- 終端機執行：`npm start`
-- 隱藏啟動器視窗：可雙擊 `start-widget.vbs`。如果 Electron 尚未安裝，它會改開 `start-widget.bat` 顯示安裝進度。
-
-打包命令也可以手動執行：
-
-```powershell
-npm.cmd install
-npm.cmd run dist:win
-```
-
-## Release
-
-GitHub Actions 會在 push 到 `main` 或 `master` 時自動打包 Windows portable `.exe`，可到該次 Actions run 下載 artifact。
-
-要產生正式 GitHub Release，推一個 `v*` tag：
+如果 Releases 頁面還是空的，代表尚未推送版本 tag。建立第一個 Release：
 
 ```powershell
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-完成後 Release 的 Assets 會有 `Claude Usage Widget.exe`，使用者只需要下載這個檔案並雙擊執行。
+GitHub Actions 會自動建置 Windows portable EXE，並把 `Claude Usage Widget.exe` 放到 Release Assets。
 
-首次啟動會自動註冊「開機自動啟動」。之後可在小工具內的設定頁或右鍵選單切換。
+## Windows SmartScreen
 
-## 操作
+第一次開啟自行打包或未簽章的 EXE 時，Windows 可能顯示：
 
-| 操作 | 說明 |
-|---|---|
-| 拖曳面板 | 移動位置（會記住） |
-| 拖曳邊緣 | 調整寬度（會記住；高度依內容自動貼合） |
-| 標題列 `–` / 膠囊 `+` | 縮小成迷你膠囊 / 展開完整面板 |
-| `⟳` | 立即更新 |
-| 齒輪設定頁 | 更新間隔、置頂、開機自動啟動、警示通知、顯示 Claude / Codex 用量、顯示 Amber Ladder、金額幣值 USD/TWD |
-| `⋯` 或右鍵 | 快速選單（置頂、開機啟動、警示通知、顯示 Claude / Codex 用量、顯示 Amber Ladder、金額幣值 USD/TWD、結束） |
+> Windows 已保護您的電腦
 
-Claude 與 Codex 各自成組，每列前方以品牌 logo（Claude 橘色標記 / OpenAI 標記）標示來源；可在設定選單分別開關「顯示 Claude 用量」「顯示 Codex 用量」。
-| 系統匣圖示點擊 | 顯示 / 隱藏 widget |
+這是 Microsoft Defender SmartScreen 對「下載次數少、沒有程式碼簽章、尚未累積信譽」的常見警告，不一定代表檔案有毒。短期處理方式：
 
-## 警示
+1. 確認 EXE 是從本 repo 的 GitHub Releases 下載。
+2. 在 SmartScreen 視窗點「其他資訊」。
+3. 點「仍要執行」。
 
-- 用量 ≥ 80%：進度條與百分比變**橘黃色**
-- 用量 ≥ 95%：變**紅色**並閃爍
-- 跨越門檻時發送 Windows 通知（可在選單關閉）
+長期要降低這個警告，需要使用程式碼簽章憑證簽署 Windows EXE，並讓該簽章累積下載與執行信譽。只改檔名、README 或重新打包通常不能消除 SmartScreen。
+
+## 本機開發
+
+```powershell
+npm install
+npm start
+```
+
+## 本機打包
+
+```powershell
+npm run dist:win
+```
+
+或直接執行：
+
+```powershell
+.\build-portable.bat
+```
+
+建置完成後，根目錄會產生：
+
+```text
+Claude Usage Widget.exe
+```
+
+## 功能摘要
+
+- 讀取本機 Claude / Codex 使用狀態。
+- 顯示 session / weekly 用量與倒數。
+- 可設定顯示項目、寬度、透明度與輪詢間隔。
+- Windows tray 常駐，適合放在桌面邊緣監看。
 
 ## 設定檔
 
-`%APPDATA%\claude-usage-widget\settings.json` — 視窗位置、面板寬度（`panelWidth`）、縮小狀態、置頂、開機啟動、通知、是否顯示 Claude 用量（`showClaude`，預設開啟）、是否顯示 Amber Ladder（`showAmberLadder`，預設關閉）、是否顯示 Codex 用量（`showCodex`，預設開啟）、更新間隔（`pollMinutes`）、金額顯示幣值（`displayCurrency`，`USD` / `TWD`）。
+設定檔位於：
+
+```text
+%APPDATA%\claude-usage-widget\settings.json
+```
+
+常見設定包含 `panelWidth`、`showClaude`、`showCodex`、`pollMinutes`、`displayCurrency` 等。
 
 ## 專案結構
 
-```
-main.js                  Electron 主行程：輪詢 API、視窗/系統匣/設定/通知
+```text
+main.js                  Electron main process、資料讀取、視窗與 tray
 preload.js               IPC bridge
-renderer/                UI（Claude 深色風格，使用官方 Claude logo SVG）
-scripts/gen-tray-icon.js 產生系統匣 PNG 圖示（純 Node，無相依套件）
+renderer/                Widget UI
+assets/                  圖示資源
+scripts/copy-release-exe.js
+                         將 dist 產物複製成穩定檔名，供 Release 上傳
+.github/workflows/       GitHub Actions Windows Release 建置流程
 ```
