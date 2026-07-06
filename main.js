@@ -16,6 +16,8 @@ const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 const CODEX_SESSION_BREAKDOWN_LIMIT = 240;
 const CLAUDE_SESSION_BREAKDOWN_LIMIT = 240;
+const LOGIN_ITEM_NAME = 'Claude Usage Widget';
+const LEGACY_LOGIN_ITEM_NAMES = ['electron.app.Claude Usage Widget', 'electron.app.Electron'];
 
 let win = null;
 let tray = null;
@@ -970,16 +972,42 @@ function updateTrayTooltip(data, codex) {
 }
 
 // ---------- login item ----------
+function packagedLoginItemPath() {
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  const candidates = [
+    process.env.PORTABLE_EXECUTABLE_FILE,
+    portableDir ? path.join(portableDir, 'usage widget.exe') : null,
+    path.join(process.cwd(), 'usage widget.exe'),
+    process.execPath,
+  ];
+  return candidates.find((p) => p && fs.existsSync(p)) || process.execPath;
+}
+
+function clearLegacyLoginItems() {
+  if (process.platform !== 'win32') return;
+  for (const name of LEGACY_LOGIN_ITEM_NAMES) {
+    try { app.setLoginItemSettings({ openAtLogin: false, name }); } catch {}
+  }
+}
+
 function applyLoginItem() {
   if (!app.isPackaged) {
     app.setLoginItemSettings({
       openAtLogin: settings.openAtLogin,
+      name: LOGIN_ITEM_NAME,
       path: process.execPath,
       args: [path.resolve(__dirname)],
     });
-  } else {
-    app.setLoginItemSettings({ openAtLogin: settings.openAtLogin });
+    return;
   }
+
+  clearLegacyLoginItems();
+  app.setLoginItemSettings({
+    openAtLogin: settings.openAtLogin,
+    name: LOGIN_ITEM_NAME,
+    path: packagedLoginItemPath(),
+    args: [],
+  });
 }
 
 // ---------- IPC ----------

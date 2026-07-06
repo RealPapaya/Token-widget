@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## portable-autostart-needs-stable-exe-path (2026-07-06)
+- Trap: `app.setLoginItemSettings({ openAtLogin })` in an electron-builder portable app can register the extracted/runtime executable instead of the stable user-facing EXE.
+- Cost: The setting appears enabled, but Windows reboot/login does not relaunch the widget.
+- Rule: For packaged portable builds, pass an explicit login item `name`, stable `path` from `PORTABLE_EXECUTABLE_FILE`/portable directory, empty `args`, and clear legacy Electron/TEMP Run keys.
+
 ## app-icon-from-user-source (2026-07-06)
 - Win: `assets/app.ico` is generated from `assets/app-source.png` with background-key transparency, while `assets/tray.png` remains generated separately.
 - Benefit: User-provided EXE icon art survives future `npm run gen-icon` runs instead of being overwritten by the tray icon generator.
