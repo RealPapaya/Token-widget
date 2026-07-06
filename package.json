@@ -23,7 +23,7 @@
     ],
     "asar": true,
     "win": {
-      "artifactName": "${productName}.${ext}",
+      "artifactName": "usage widget.${ext}",
       "target": [
         {
           "target": "portable",
@@ -31,7 +31,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "assets/app.ico"
     }
   },
   "author": "morris_hsueh",

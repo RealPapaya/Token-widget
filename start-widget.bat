@@ -3,8 +3,8 @@ setlocal
 
 cd /d "%~dp0"
 
-if exist "Claude Usage Widget.exe" (
-  start "" /D "%~dp0" "%~dp0Claude Usage Widget.exe"
+if exist "Usage widget.exe" (
+  start "" /D "%~dp0" "%~dp0usage widget.exe"
   exit /b 0
 )
 

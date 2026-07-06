@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## package-icon-and-artifact-name (2026-07-06)
+- Win: The release artifact is now named `usage widget.exe` and uses `assets/app.ico` generated from the same starburst asset as the tray icon.
+- Benefit: VBS/BAT launchers, root release copy, and dist output all point at the same user-facing EXE name and icon.
+- Rule: When renaming packaged artifacts, update electron-builder `artifactName`, release-copy script, and launcher targets together; verify the associated icon from the built EXE.
+
 ## launcher-prefers-packaged-exe (2026-07-06)
 - Win: `start-widget.vbs` and `start-widget.bat` now prefer `Claude Usage Widget.exe` when it exists, falling back to source Electron only for development.
 - Benefit: The shortcut path uses the same packaged runtime as the manually verified EXE, avoiding unstable source-mode rendering on this machine.

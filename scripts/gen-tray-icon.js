@@ -1,28 +1,21 @@
-// Generates assets/tray.png — a Claude-style starburst in brand orange (#D97757)
-// on a transparent background. Pure Node (zlib), no dependencies.
-'use strict';
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const SIZE = 32;
 const COLOR = [0xd9, 0x77, 0x57]; // Claude orange
-
-// Ray lengths vary to echo the irregular Claude sunburst mark.
 const RAYS = 12;
 const LENGTHS = [1.0, 0.72, 0.9, 0.68, 1.0, 0.78, 0.92, 0.7, 1.0, 0.74, 0.9, 0.78];
 
-function coverage(px, py) {
-  // 3x3 supersampling for antialiasing
+function coverage(px, py, size) {
   let hits = 0;
   for (let sy = 0; sy < 3; sy++) {
     for (let sx = 0; sx < 3; sx++) {
-      const x = px + (sx + 0.5) / 3 - SIZE / 2;
-      const y = py + (sy + 0.5) / 3 - SIZE / 2;
+      const x = px + (sx + 0.5) / 3 - size / 2;
+      const y = py + (sy + 0.5) / 3 - size / 2;
       const r = Math.hypot(x, y);
-      const maxR = SIZE / 2 - 1;
+      const maxR = size / 2 - Math.max(1, size / 32);
       if (r > maxR) continue;
-      if (r < 1.6) { hits++; continue; } // solid core
+      if (r < size * 0.05) { hits++; continue; }
       const angle = Math.atan2(y, x);
       const step = (Math.PI * 2) / RAYS;
       const k = Math.round(angle / step);
@@ -30,9 +23,8 @@ function coverage(px, py) {
       const idx = ((k % RAYS) + RAYS) % RAYS;
       const rayLen = maxR * LENGTHS[idx];
       if (r > rayLen) continue;
-      // tapered width: wide at base, narrow at tip
       const t = r / rayLen;
-      const halfWidth = 1.5 * (1 - t) + 0.45;
+      const halfWidth = size * 0.047 * (1 - t) + size * 0.014;
       const perp = Math.abs(r * Math.sin(angle - rayAngle));
       if (perp <= halfWidth) hits++;
     }
@@ -40,12 +32,12 @@ function coverage(px, py) {
   return hits / 9;
 }
 
-function buildRGBA() {
-  const buf = Buffer.alloc(SIZE * SIZE * 4);
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const a = coverage(x, y);
-      const o = (y * SIZE + x) * 4;
+function buildRGBA(size) {
+  const buf = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const a = coverage(x, y, size);
+      const o = (y * size + x) * 4;
       buf[o] = COLOR[0];
       buf[o + 1] = COLOR[1];
       buf[o + 2] = COLOR[2];
@@ -55,7 +47,6 @@ function buildRGBA() {
   return buf;
 }
 
-// --- minimal PNG encoder ---
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -81,16 +72,16 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-function encodePNG(rgba) {
+function encodePNG(size, rgba) {
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(SIZE, 0);
-  ihdr.writeUInt32BE(SIZE, 4);
-  ihdr[8] = 8;  // bit depth
-  ihdr[9] = 6;  // RGBA
-  const raw = Buffer.alloc(SIZE * (SIZE * 4 + 1));
-  for (let y = 0; y < SIZE; y++) {
-    raw[y * (SIZE * 4 + 1)] = 0; // filter: none
-    rgba.copy(raw, y * (SIZE * 4 + 1) + 1, y * SIZE * 4, (y + 1) * SIZE * 4);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const raw = Buffer.alloc(size * (size * 4 + 1));
+  for (let y = 0; y < size; y++) {
+    raw[y * (size * 4 + 1)] = 0;
+    rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
   }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -100,7 +91,32 @@ function encodePNG(rgba) {
   ]);
 }
 
+function encodeICO(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+  const entries = [];
+  let offset = 6 + images.length * 16;
+  for (const img of images) {
+    const entry = Buffer.alloc(16);
+    entry[0] = img.size === 256 ? 0 : img.size;
+    entry[1] = img.size === 256 ? 0 : img.size;
+    entry[2] = 0;
+    entry[3] = 0;
+    entry.writeUInt16LE(1, 4);
+    entry.writeUInt16LE(32, 6);
+    entry.writeUInt32LE(img.data.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    entries.push(entry);
+    offset += img.data.length;
+  }
+  return Buffer.concat([header, ...entries, ...images.map((img) => img.data)]);
+}
+
 const outDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'tray.png'), encodePNG(buildRGBA()));
-console.log('wrote assets/tray.png');
+fs.writeFileSync(path.join(outDir, 'tray.png'), encodePNG(32, buildRGBA(32)));
+const iconImages = [16, 32, 48, 256].map((size) => ({ size, data: encodePNG(size, buildRGBA(size)) }));
+fs.writeFileSync(path.join(outDir, 'app.ico'), encodeICO(iconImages));
+console.log('wrote assets/tray.png and assets/app.ico');
