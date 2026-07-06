@@ -6,6 +6,7 @@ const {
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
@@ -16,7 +17,9 @@ const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 const CODEX_SESSION_BREAKDOWN_LIMIT = 240;
 const CLAUDE_SESSION_BREAKDOWN_LIMIT = 240;
+const APP_DISPLAY_NAME = 'usage widget';
 const LOGIN_ITEM_NAME = 'Claude Usage Widget';
+const LOGIN_ITEM_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const LEGACY_LOGIN_ITEM_NAMES = ['electron.app.Claude Usage Widget', 'electron.app.Electron'];
 
 let win = null;
@@ -634,8 +637,12 @@ function maybeNotify(data, codex) {
 }
 
 // ---------- window ----------
+function appIconPath() {
+  return path.join(__dirname, 'assets', 'app.ico');
+}
+
 function trayIconPath() {
-  return path.join(__dirname, 'assets', 'tray.png');
+  return process.platform === 'win32' ? appIconPath() : path.join(__dirname, 'assets', 'tray.png');
 }
 
 function validatePos(pos) {
@@ -710,6 +717,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: modeWidth(),
     height: settings.collapsed ? 52 : 300,
+    show: false,
+    icon: appIconPath(),
     x: pos ? pos.x : undefined,
     y: pos ? pos.y : undefined,
     frame: false,
@@ -729,6 +738,12 @@ function createWindow() {
   const createdWindow = win;
   createdWindow.on('closed', () => {
     if (win === createdWindow) win = null;
+  });
+  createdWindow.setSkipTaskbar(true);
+  createdWindow.once('ready-to-show', () => {
+    if (createdWindow.isDestroyed()) return;
+    createdWindow.setSkipTaskbar(true);
+    createdWindow.show();
   });
   if (settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -781,6 +796,7 @@ function liveWindow() {
 function showExistingOrCreateWindow() {
   const current = liveWindow();
   if (current) {
+    current.setSkipTaskbar(true);
     current.show();
     current.focus();
     return;
@@ -794,7 +810,12 @@ function toggleWindowVisibility() {
     if (app.isReady()) createWindow();
     return;
   }
-  current.isVisible() ? current.hide() : current.show();
+  if (current.isVisible()) {
+    current.hide();
+  } else {
+    current.setSkipTaskbar(true);
+    current.show();
+  }
 }
 
 // Whether each CLI is present locally. Claude = its OAuth credentials file
@@ -957,7 +978,7 @@ function rebuildTrayMenu() {
 function createTray() {
   const icon = nativeImage.createFromPath(trayIconPath());
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('Claude Usage Widget');
+  tray.setToolTip(APP_DISPLAY_NAME);
   rebuildTrayMenu();
   tray.on('click', () => toggleWindowVisibility());
 }
@@ -966,17 +987,24 @@ function updateTrayTooltip(data, codex) {
   if (!tray) return;
   const gauges = settings.showClaude ? extractGauges(data) : [];
   if (settings.showCodex) gauges.push(...codexGauges(codex));
-  if (!gauges.length) { tray.setToolTip('Claude Usage Widget'); return; }
+  if (!gauges.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
   const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
-  tray.setToolTip(`Claude Usage — 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
+  tray.setToolTip(`${APP_DISPLAY_NAME} - 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
 }
 
 // ---------- login item ----------
-function packagedLoginItemPath() {
+function portableLoginItemPath() {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
   const candidates = [
     process.env.PORTABLE_EXECUTABLE_FILE,
     portableDir ? path.join(portableDir, 'usage widget.exe') : null,
+  ];
+  return candidates.find((p) => p && fs.existsSync(p)) || null;
+}
+
+function packagedLoginItemPath() {
+  const candidates = [
+    portableLoginItemPath(),
     path.join(process.cwd(), 'usage widget.exe'),
     process.execPath,
   ];
@@ -988,6 +1016,26 @@ function clearLegacyLoginItems() {
   for (const name of LEGACY_LOGIN_ITEM_NAMES) {
     try { app.setLoginItemSettings({ openAtLogin: false, name }); } catch {}
   }
+}
+
+function setRunLoginItem(exePath, openAtLogin) {
+  if (openAtLogin) {
+    execFileSync('reg.exe', [
+      'add', LOGIN_ITEM_RUN_KEY,
+      '/v', LOGIN_ITEM_NAME,
+      '/t', 'REG_SZ',
+      '/d', '"' + exePath + '"',
+      '/f',
+    ], { windowsHide: true, stdio: 'ignore' });
+    return;
+  }
+  try {
+    execFileSync('reg.exe', [
+      'delete', LOGIN_ITEM_RUN_KEY,
+      '/v', LOGIN_ITEM_NAME,
+      '/f',
+    ], { windowsHide: true, stdio: 'ignore' });
+  } catch {}
 }
 
 function applyLoginItem() {
@@ -1002,6 +1050,12 @@ function applyLoginItem() {
   }
 
   clearLegacyLoginItems();
+  const portablePath = process.platform === 'win32' ? portableLoginItemPath() : null;
+  if (portablePath) {
+    setRunLoginItem(portablePath, settings.openAtLogin);
+    return;
+  }
+
   app.setLoginItemSettings({
     openAtLogin: settings.openAtLogin,
     name: LOGIN_ITEM_NAME,

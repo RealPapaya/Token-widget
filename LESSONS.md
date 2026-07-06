@@ -15,6 +15,16 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## transparent-widget-hide-taskbar-button (2026-07-06)
+- Win: Creating the BrowserWindow with `show: false`, setting `skipTaskbar`, then calling `setSkipTaskbar(true)` again before `show()` leaves the packaged widget without a Windows taskbar main window.
+- Benefit: The app can live as a tray widget instead of appearing as a normal `.exe` button on the bottom taskbar.
+- Rule: For this frameless tray widget, keep taskbar hiding both in BrowserWindow options and in the show/re-show paths.
+
+## windows-run-autostart-paths-need-quotes (2026-07-06)
+- Trap: Windows `Run` registry values are command-line strings; an exe path with spaces must be quote-wrapped even when the path itself is correct.
+- Cost: The Run key can point at `D:\Google AI\Token widget\usage widget.exe`, but login parses it incorrectly and the widget never appears after reboot.
+- Rule: For portable packaged autostart, verify the actual `HKCU\...\Run` value is `"<stable exe path>"`, not just that the value exists.
+
 ## portable-autostart-needs-stable-exe-path (2026-07-06)
 - Trap: `app.setLoginItemSettings({ openAtLogin })` in an electron-builder portable app can register the extracted/runtime executable instead of the stable user-facing EXE.
 - Cost: The setting appears enabled, but Windows reboot/login does not relaunch the widget.
