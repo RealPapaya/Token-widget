@@ -3,6 +3,11 @@ setlocal
 
 cd /d "%~dp0"
 
+if exist "Claude Usage Widget.exe" (
+  start "" /D "%~dp0" "%~dp0Claude Usage Widget.exe"
+  exit /b 0
+)
+
 if not exist "package.json" (
   echo package.json was not found. Please run this file from the widget folder.
   pause

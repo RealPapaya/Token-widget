@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## launcher-prefers-packaged-exe (2026-07-06)
+- Win: `start-widget.vbs` and `start-widget.bat` now prefer `Claude Usage Widget.exe` when it exists, falling back to source Electron only for development.
+- Benefit: The shortcut path uses the same packaged runtime as the manually verified EXE, avoiding unstable source-mode rendering on this machine.
+- Rule: User-facing launchers should start the packaged EXE first; keep source Electron as a fallback, not the default.
+
 ## disable-gpu-for-transparent-widget (2026-07-06)
 - Trap: Windows transparent frameless Electron windows can render visually corrupted on some GPU/driver combinations even when DOM text and capture smoke tests are otherwise healthy.
 - Cost: The widget opens but appears broken to the user.
