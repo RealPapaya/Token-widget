@@ -15,6 +15,12 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## powershell-selectobject-sandbox-read-failure (2026-07-06)
+- Trap: Get-Content | Select-Object -Skip style reads can hit sandbox CreateProcessWithLogonW failed: 1385 in this workspace even when narrower `rg -n -C` reads succeed.
+- Cost: It blocks review-context gathering and wastes time on a tooling path that looks valid but is unreliable here.
+- Rule: For line-range reads in this repo, prefer `rg -n -C` or other single-process reads before falling back to heavier PowerShell pipelines.
+
+
 ## mixed-line-endings-break-exact-powershell-anchors (2026-07-06)
 - Trap: `renderer/style.css` can contain mixed LF/CRLF, so exact PowerShell string anchors may miss valid CSS blocks.
 - Cost: A scoped UI edit stalled on anchor mismatches even though the target rules existed.

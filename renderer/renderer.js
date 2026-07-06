@@ -747,6 +747,8 @@ function collectCodexHabits(codex) {
   const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
   const input = sessions.reduce((sum, s) => sum + (Number(s.inputTokens) || 0), 0);
   const cached = sessions.reduce((sum, s) => sum + (Number(s.cachedInputTokens) || 0), 0);
+  const cacheWrite = sessions.reduce((sum, s) => sum + (Number(s.cacheCreationInputTokens) || 0), 0);
+  const totalInput = input + cached + cacheWrite;
   const output = sessions.reduce((sum, s) => sum + (Number(s.outputTokens) || 0), 0);
   const reasoning = sessions.reduce((sum, s) => sum + (Number(s.reasoningOutputTokens) || 0), 0);
   const workflowHits = sessions.reduce((sum, s) => sum + (Number(s.workflowSubagentHits) || 0), 0);
@@ -762,9 +764,9 @@ function collectCodexHabits(codex) {
     {
       brand: 'codex',
       label: '快取輸入 Token',
-      pct: input > 0 ? (cached / input) * 100 : null,
+      pct: totalInput > 0 ? (cached / totalInput) * 100 : null,
       kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
+      detail: `${fmtTokens(cached)} / ${fmtTokens(totalInput)} 輸入 Token`,
     },
     {
       brand: 'codex',
@@ -798,6 +800,7 @@ function collectSessionHabits(sessions, brand) {
   const input = sessionTotal(sessions, 'inputTokens');
   const cached = sessionTotal(sessions, 'cachedInputTokens');
   const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
+  const totalInput = input + cached + cacheWrite;
   const output = sessionTotal(sessions, 'outputTokens');
   const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
   const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');
@@ -814,9 +817,9 @@ function collectSessionHabits(sessions, brand) {
     {
       brand,
       label: '快取輸入 Token',
-      pct: input > 0 ? (cached / input) * 100 : null,
+      pct: totalInput > 0 ? (cached / totalInput) * 100 : null,
       kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
+      detail: `${fmtTokens(cached)} / ${fmtTokens(totalInput)} 輸入 Token`,
     },
     {
       brand,
