@@ -117,6 +117,4 @@ function encodeICO(images) {
 const outDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'tray.png'), encodePNG(32, buildRGBA(32)));
-const iconImages = [16, 32, 48, 256].map((size) => ({ size, data: encodePNG(size, buildRGBA(size)) }));
-fs.writeFileSync(path.join(outDir, 'app.ico'), encodeICO(iconImages));
-console.log('wrote assets/tray.png and assets/app.ico');
+console.log('wrote assets/tray.png');

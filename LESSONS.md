@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## app-icon-from-user-source (2026-07-06)
+- Win: `assets/app.ico` is generated from `assets/app-source.png` with background-key transparency, while `assets/tray.png` remains generated separately.
+- Benefit: User-provided EXE icon art survives future `npm run gen-icon` runs instead of being overwritten by the tray icon generator.
+- Rule: Keep app icon source art in repo and verify ICO transparency by extracting the PNG entry, not by relying only on `Icon.ToBitmap()`.
+
 ## package-icon-and-artifact-name (2026-07-06)
 - Win: The release artifact is now named `usage widget.exe` and uses `assets/app.ico` generated from the same starburst asset as the tray icon.
 - Benefit: VBS/BAT launchers, root release copy, and dist output all point at the same user-facing EXE name and icon.

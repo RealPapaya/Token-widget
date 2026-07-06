@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dist:win": "npx --yes electron-builder --win portable && node scripts/copy-release-exe.js",
-    "gen-icon": "node scripts/gen-tray-icon.js"
+    "gen-icon": "node scripts/gen-tray-icon.js && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-app-icon.ps1"
   },
   "build": {
     "appId": "com.morrishsueh.claudeusagewidget",
