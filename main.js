@@ -29,6 +29,10 @@ let movePersistenceTimer = null;
 let preferredPos = null;
 const isSmokeTest = process.argv.includes('--screenshot');
 
+// Transparent frameless windows can render corrupted on some Windows GPU/driver combinations.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu-compositing');
+
 // ---------- settings ----------
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = {
@@ -720,6 +724,10 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  const createdWindow = win;
+  createdWindow.on('closed', () => {
+    if (win === createdWindow) win = null;
+  });
   if (settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
@@ -762,6 +770,29 @@ function createWindow() {
       }, 5000);
     });
   }
+}
+
+function liveWindow() {
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function showExistingOrCreateWindow() {
+  const current = liveWindow();
+  if (current) {
+    current.show();
+    current.focus();
+    return;
+  }
+  if (app.isReady()) createWindow();
+}
+
+function toggleWindowVisibility() {
+  const current = liveWindow();
+  if (!current) {
+    if (app.isReady()) createWindow();
+    return;
+  }
+  current.isVisible() ? current.hide() : current.show();
 }
 
 // Whether each CLI is present locally. Claude = its OAuth credentials file
@@ -823,7 +854,7 @@ function rebuildTrayMenu() {
       label: settings.collapsed ? '展開面板' : '縮小成膠囊',
       click: () => setCollapsed(!settings.collapsed),
     },
-    { label: '顯示 / 隱藏', click: () => (win.isVisible() ? win.hide() : win.show()) },
+    { label: '顯示 / 隱藏', click: () => toggleWindowVisibility() },
     { label: '立即更新', click: () => pollNow() },
     { type: 'separator' },
     {
@@ -926,7 +957,7 @@ function createTray() {
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Claude Usage Widget');
   rebuildTrayMenu();
-  tray.on('click', () => (win.isVisible() ? win.hide() : win.show()));
+  tray.on('click', () => toggleWindowVisibility());
 }
 
 function updateTrayTooltip(data, codex) {
@@ -1017,7 +1048,7 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win) { win.show(); win.focus(); }
+    showExistingOrCreateWindow();
   });
 
   app.whenReady().then(() => {
