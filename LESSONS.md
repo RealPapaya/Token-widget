@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## mixed-line-endings-break-exact-powershell-anchors (2026-07-06)
+- Trap: `renderer/style.css` can contain mixed LF/CRLF, so exact PowerShell string anchors may miss valid CSS blocks.
+- Cost: A scoped UI edit stalled on anchor mismatches even though the target rules existed.
+- Rule: For fallback patch scripts in this repo, use regex anchors with `\r?\n` for CSS; never pipe through `Get-Content | Set-Content`.
+
 ## transparent-widget-hide-taskbar-button (2026-07-06)
 - Win: Creating the BrowserWindow with `show: false`, setting `skipTaskbar`, then calling `setSkipTaskbar(true)` again before `show()` leaves the packaged widget without a Windows taskbar main window.
 - Benefit: The app can live as a tray widget instead of appearing as a normal `.exe` button on the bottom taskbar.

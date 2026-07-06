@@ -193,6 +193,76 @@ function displayGauges() {
 
 const $ = (id) => document.getElementById(id);
 
+let previousGaugeWidths = new Map();
+let previousCapsuleWidths = new Map();
+let activeMainView = 'gauges';
+const motionTimers = new WeakMap();
+
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function clampPct(pct) {
+  return Math.max(0, Math.min(100, Number(pct) || 0));
+}
+
+function pctWidth(pct) {
+  return `${clampPct(pct)}%`;
+}
+
+function gaugeMotionKey(g) {
+  return `${g.brand}:${g.key}`;
+}
+
+function animateWidth(el, fromPct, toPct) {
+  if (!el) return;
+  const to = pctWidth(toPct);
+  if (prefersReducedMotion()) {
+    el.style.width = to;
+    return;
+  }
+  el.style.transition = 'none';
+  el.style.width = pctWidth(fromPct);
+  void el.offsetWidth;
+  el.style.transition = '';
+  requestAnimationFrame(() => {
+    el.style.width = to;
+  });
+}
+
+function animateInlineBars(root, selector) {
+  if (!root || prefersReducedMotion()) return;
+  const bars = [...root.querySelectorAll(selector)].map((bar) => {
+    const target = bar.style.width || '0%';
+    bar.style.transition = 'none';
+    bar.style.width = '0%';
+    return { bar, target };
+  });
+  void root.offsetWidth;
+  requestAnimationFrame(() => {
+    bars.forEach(({ bar, target }) => {
+      bar.style.transition = '';
+      bar.style.width = target;
+    });
+  });
+}
+
+function animateEnter(el, className = 'view-enter') {
+  if (!el || prefersReducedMotion()) return;
+  const oldTimer = motionTimers.get(el);
+  if (oldTimer) clearTimeout(oldTimer);
+  el.classList.remove(className, `${className}-active`);
+  void el.offsetWidth;
+  el.classList.add(className);
+  requestAnimationFrame(() => {
+    el.classList.add(`${className}-active`);
+  });
+  motionTimers.set(el, setTimeout(() => {
+    el.classList.remove(className, `${className}-active`);
+    motionTimers.delete(el);
+  }, 380));
+}
+
 let tooltipEl = null;
 let tooltipTarget = null;
 
@@ -907,20 +977,35 @@ function renderUsageView() {
   if (usageAnalysisSheet === 'habits') renderHabitSections(box);
   else renderSessionSections(box);
   if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
+  animateInlineBars(box, '.session-bar > div, .insight-bar > div');
+}
+function setMainViewVisible(id, visible, shouldAnimate) {
+  const el = $(id);
+  if (!el) return;
+  const wasHidden = el.classList.contains('hidden');
+  el.classList.toggle('hidden', !visible);
+  if (visible && shouldAnimate && wasHidden) animateEnter(el);
 }
 function syncMainViewVisibility() {
-  $('gauges').classList.toggle('hidden', settingsOpen || usageViewOpen);
-  $('settings-view').classList.toggle('hidden', !settingsOpen);
-  $('usage-view').classList.toggle('hidden', !usageViewOpen);
+  const nextView = usageViewOpen ? 'usage-view' : (settingsOpen ? 'settings-view' : 'gauges');
+  const changed = nextView !== activeMainView;
+  setMainViewVisible('gauges', nextView === 'gauges', changed);
+  setMainViewVisible('settings-view', nextView === 'settings-view', changed);
+  setMainViewVisible('usage-view', nextView === 'usage-view', changed);
+  $('btn-settings').classList.toggle('active', settingsOpen);
   $('btn-usage-details').classList.toggle('active', usageViewOpen);
-  requestResize();
+  activeMainView = nextView;
+  requestResize({ force: changed });
+  if (changed) requestResize({ delay: 260, force: true });
 }
 function renderGauges() {
   const box = $('gauges');
   const gauges = displayGauges();
+  const nextGaugeWidths = new Map();
   box.innerHTML = '';
   if (!gauges.length) {
     box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
+    previousGaugeWidths = nextGaugeWidths;
   }
   let prevBrand = null;
   for (const g of gauges) {
@@ -953,18 +1038,25 @@ function renderGauges() {
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
     const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
+    const motionKey = gaugeMotionKey(g);
+    const previousPct = previousGaugeWidths.has(motionKey) ? previousGaugeWidths.get(motionKey) : 0;
+    const increased = g.pct > previousPct + 0.05;
+    if (increased) row.classList.add('gauge-updated');
 
     row.innerHTML =
       `<div class="gauge-top">` +
       `<span class="gauge-label">${logo}${g.label}</span>` +
-      `<span class="gauge-pct ${pctClass}">${g.pct.toFixed(1)}%</span>` +
+      `<span class="gauge-pct ${pctClass}${increased ? ' number-bump' : ''}">${g.pct.toFixed(1)}%</span>` +
       `</div>` +
-      `<div class="bar"><div class="fill ${fillClass}" style="width:${g.pct}%"></div></div>` +
+      `<div class="bar"><div class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></div></div>` +
       ((subLeft || subRight)
         ? `<div class="gauge-sub"><span>${subLeft}</span><span>${subRight}</span></div>`
         : '');
     box.appendChild(row);
+    animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    nextGaugeWidths.set(motionKey, g.pct);
   }
+  previousGaugeWidths = nextGaugeWidths;
   renderStatus();
   renderCapsule(gauges);
   requestResize();
@@ -1006,26 +1098,34 @@ function renderCapsule(gauges) {
   box.innerHTML = '';
   if (!gauges.length) {
     box.innerHTML = '<div class="capsule-empty">--%</div>';
+    previousCapsuleWidths = new Map();
     setTooltip($('capsule'), '目前沒有可顯示的用量限制');
     return;
   }
 
   const rows = topGaugeByBrand(gauges);
+  const nextCapsuleWidths = new Map();
   for (const g of rows) {
     const isCodex = g.brand === 'codex';
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
+    const previousPct = previousCapsuleWidths.has(g.brand) ? previousCapsuleWidths.get(g.brand) : 0;
+    const increased = g.pct > previousPct + 0.05;
     const row = document.createElement('div');
     row.className = `capsule-item brand-${g.brand}`;
+    if (increased) row.classList.add('gauge-updated');
     row.innerHTML =
       `<span class="capsule-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>` +
       `<span class="capsule-main">` +
       `<span class="capsule-name">${isCodex ? 'Codex' : 'Claude'}</span>` +
-      `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${g.pct}%"></span></span>` +
+      `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></span></span>` +
       `</span>` +
-      `<span class="capsule-pct ${pctClass}">${g.pct.toFixed(0)}%</span>`;
+      `<span class="capsule-pct ${pctClass}${increased ? ' number-bump' : ''}">${g.pct.toFixed(0)}%</span>`;
     box.appendChild(row);
+    animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    nextCapsuleWidths.set(g.brand, g.pct);
   }
+  previousCapsuleWidths = nextCapsuleWidths;
 
   const summary = rows.map((g) => `${g.brand === 'codex' ? 'Codex' : 'Claude'} ${g.pct.toFixed(1)}%`).join(' / ');
   const soonest = gauges
@@ -1059,9 +1159,18 @@ function requestResize(options = {}) {
 
 function applyCollapsed(c) {
   collapsed = c;
-  $('panel').classList.toggle('hidden', c);
-  $('capsule').classList.toggle('hidden', !c);
-  requestResize();
+  const panel = $('panel');
+  const capsule = $('capsule');
+  const nextSurface = c ? capsule : panel;
+  const oldSurface = c ? panel : capsule;
+  if (oldSurface) oldSurface.classList.add('hidden');
+  if (nextSurface) {
+    const wasHidden = nextSurface.classList.contains('hidden');
+    nextSurface.classList.remove('hidden');
+    if (wasHidden) animateEnter(nextSurface, 'surface-enter');
+  }
+  requestResize({ force: true });
+  requestResize({ delay: 260, force: true });
 }
 
 // ---------- wiring ----------
