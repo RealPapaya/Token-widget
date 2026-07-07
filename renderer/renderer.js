@@ -201,6 +201,7 @@ let usageAnalysisSheet = 'sessions';
 let usagePeriodKey = 'week';
 let usageSessionMode = 'project';
 let usageInsightMode = 'tokens';
+let usageLoaded = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -1139,13 +1140,24 @@ function syncMainViewVisibility() {
   requestResize({ force: changed });
   if (changed) requestResize({ delay: 260, force: true });
 }
+function renderLoadingState(box) {
+  const row = document.createElement('div');
+  row.className = 'gauge loading-gauge';
+  row.innerHTML = '<div class="loading-state"><span class="spinner"></span><span>正在讀取用量限制</span></div>';
+  box.appendChild(row);
+}
+
 function renderGauges() {
   const box = $('gauges');
   const gauges = displayGauges();
   const nextGaugeWidths = new Map();
   box.innerHTML = '';
   if (!gauges.length) {
-    box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
+    if (usageLoaded) {
+      box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
+    } else {
+      renderLoadingState(box);
+    }
     previousGaugeWidths = nextGaugeWidths;
   }
   let prevBrand = null;
@@ -1207,6 +1219,7 @@ function renderStatus() {
   const dot = $('status-dot');
   const text = $('status-text');
   if (lastError) {
+    dot.classList.remove('loading');
     dot.classList.add('err');
     const msgs = {
       'no-credentials': '找不到 Claude 憑證（~/.claude/.credentials.json）',
@@ -1215,8 +1228,12 @@ function renderStatus() {
       'http-429': 'Anthropic 暫時限流，稍後自動重試（Codex 不受影響）',
     };
     text.textContent = msgs[lastError] || `更新失敗（${lastError}）`;
-  } else if (lastFetchedAt) {
+  } else if (!usageLoaded) {
     dot.classList.remove('err');
+    dot.classList.add('loading');
+    text.textContent = '正在讀取用量限制...';
+  } else if (lastFetchedAt) {
+    dot.classList.remove('err', 'loading');
     const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
@@ -1238,9 +1255,11 @@ function renderCapsule(gauges) {
   if (!box) return;
   box.innerHTML = '';
   if (!gauges.length) {
-    box.innerHTML = '<div class="capsule-empty">--%</div>';
+    box.innerHTML = usageLoaded
+      ? '<div class="capsule-empty">--%</div>'
+      : '<div class="capsule-loading"><span class="spinner spinner-small"></span><span>載入中</span></div>';
     previousCapsuleWidths = new Map();
-    setTooltip($('capsule'), '目前沒有可顯示的用量限制');
+    setTooltip($('capsule'), usageLoaded ? '目前沒有可顯示的用量限制' : '正在讀取用量限制');
     return;
   }
 
@@ -1420,6 +1439,7 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 }
 
 window.widget.onUsage((payload) => {
+  usageLoaded = true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
   if (payload.ok) {

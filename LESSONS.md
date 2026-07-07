@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## powershell-scripted-edits-need-small-verified-anchors (2026-07-07)
+- Trap: Large PowerShell replacement scripts are easy to break with quoting, regex escaping, or same-line comments even when the intended edit is small.
+- Cost: Failed scripted edits waste time and can risk partial changes if writes are not delayed until all anchors pass.
+- Rule: For this repo, use small checked anchors, write only after every anchor matches, and immediately inspect `git diff` plus `node --check` for touched JS.
+
 ## verify-scripted-replace-insertions (2026-07-07)
 - Trap: Scripted exact-string replacements can partially apply, replacing a call site while missing the helper insertion when line endings or anchors differ.
 - Cost: The file can pass `node --check` but still fail at runtime with an undefined helper.

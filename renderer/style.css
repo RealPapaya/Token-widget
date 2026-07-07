@@ -139,6 +139,29 @@ html, body {
 
 /* gauge rows */
 .gauge { padding: 7px 0; }
+.loading-gauge { padding: 10px 0 12px; }
+.loading-state,
+.capsule-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: spin 850ms linear infinite;
+  flex-shrink: 0;
+}
+.spinner-small {
+  width: 12px;
+  height: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 /* separator between the Claude block and the Codex block; the adjacent gauges'
    equal 7px paddings give it matching space above and below. */
 .gauge-divider { border-top: 1px solid var(--border); }
@@ -670,6 +693,7 @@ html, body {
   background: #6BAA64; flex-shrink: 0;
 }
 .dot.err { background: var(--crit); }
+.dot.loading { background: var(--orange); animation: pulse 1.2s ease-in-out infinite; }
 
 /* ---------- collapsed capsule ---------- */
 .capsule {
