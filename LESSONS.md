@@ -15,6 +15,10 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## apply-patch-may-hit-windows-sandbox-logon-error (2026-07-07)
+- Trap: The harness apply_patch tool can fail in this workspace with `CreateProcessWithLogonW failed: 1385` before reading editable project files.
+- Cost: A normal patch path can stall even when the intended edit is small and inside the writable repo.
+- Rule: If apply_patch hits the Windows sandbox logon error, use small verified .NET UTF-8 read/write anchors, require every anchor to match before writing, then inspect `git diff` and run the narrow syntax checks.
 ## release-workflow-asset-name-matches-builder-output (2026-07-07)
 - Win: GitHub Actions release assets now use the same `usage widget.exe` name produced by electron-builder and copied to the repo root.
 - Benefit: Main/master pushes can update the fixed `latest` Release without failing on a missing legacy `Claude Usage Widget.exe` path.

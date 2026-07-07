@@ -229,22 +229,6 @@ html, body {
 .fill.crit { background: var(--crit); animation: pulse 1.6s ease-in-out infinite; }
 .fill.codex { background: var(--codex); }
 @keyframes pulse { 50% { opacity: 0.65; } }
-.number-bump {
-  display: inline-block;
-  animation: number-bump 700ms var(--motion-curve);
-}
-.gauge-updated {
-  animation: row-flash 780ms ease-out;
-}
-@keyframes row-flash {
-  0% { background: rgba(217, 119, 87, 0.22); box-shadow: 0 0 0 1px rgba(217, 119, 87, 0.18) inset; }
-  100% { background: transparent; box-shadow: none; }
-}
-@keyframes number-bump {
-  0% { transform: translateY(0) scale(1); }
-  45% { transform: translateY(-2px) scale(1.18); }
-  100% { transform: translateY(0) scale(1); }
-}
 
 /* inline brand logo inside a gauge label (Codex) */
 .row-logo {

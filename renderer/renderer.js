@@ -253,6 +253,10 @@ function pctWidth(pct) {
   return `${clampPct(pct)}%`;
 }
 
+function pctText(pct, decimals) {
+  return `${clampPct(pct).toFixed(decimals)}%`;
+}
+
 function gaugeMotionKey(g) {
   return `${g.brand}:${g.key}`;
 }
@@ -271,6 +275,26 @@ function animateWidth(el, fromPct, toPct) {
   requestAnimationFrame(() => {
     el.style.width = to;
   });
+}
+
+function animatePctText(el, fromPct, toPct, decimals) {
+  if (!el) return;
+  const from = clampPct(fromPct);
+  const to = clampPct(toPct);
+  if (prefersReducedMotion() || Math.abs(to - from) < 0.05) {
+    el.textContent = pctText(to, decimals);
+    return;
+  }
+  const duration = 700;
+  const startedAt = performance.now();
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = pctText(from + ((to - from) * eased), decimals);
+    if (progress < 1) requestAnimationFrame(tick);
+  };
+  el.textContent = pctText(from, decimals);
+  requestAnimationFrame(tick);
 }
 
 function animateInlineBars(root, selector) {
@@ -1194,13 +1218,10 @@ function renderGauges() {
     const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
     const motionKey = gaugeMotionKey(g);
     const previousPct = previousGaugeWidths.has(motionKey) ? previousGaugeWidths.get(motionKey) : 0;
-    const increased = g.pct > previousPct + 0.05;
-    if (increased) row.classList.add('gauge-updated');
-
     row.innerHTML =
       `<div class="gauge-top">` +
       `<span class="gauge-label">${logo}${g.label}</span>` +
-      `<span class="gauge-pct ${pctClass}${increased ? ' number-bump' : ''}">${g.pct.toFixed(1)}%</span>` +
+      `<span class="gauge-pct ${pctClass}">${pctText(previousPct, 1)}</span>` +
       `</div>` +
       `<div class="bar"><div class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></div></div>` +
       ((subLeft || subRight)
@@ -1208,6 +1229,7 @@ function renderGauges() {
         : '');
     box.appendChild(row);
     animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    animatePctText(row.querySelector('.gauge-pct'), previousPct, g.pct, 1);
     nextGaugeWidths.set(motionKey, g.pct);
   }
   previousGaugeWidths = nextGaugeWidths;
@@ -1273,19 +1295,18 @@ function renderCapsule(gauges) {
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
     const previousPct = previousCapsuleWidths.has(g.brand) ? previousCapsuleWidths.get(g.brand) : 0;
-    const increased = g.pct > previousPct + 0.05;
     const row = document.createElement('div');
     row.className = `capsule-item brand-${g.brand}`;
-    if (increased) row.classList.add('gauge-updated');
     row.innerHTML =
       `<span class="capsule-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>` +
       `<span class="capsule-main">` +
       `<span class="capsule-name">${isCodex ? 'Codex' : 'Claude'}</span>` +
       `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></span></span>` +
       `</span>` +
-      `<span class="capsule-pct ${pctClass}${increased ? ' number-bump' : ''}">${g.pct.toFixed(0)}%</span>`;
+      `<span class="capsule-pct ${pctClass}">${pctText(previousPct, 0)}</span>`;
     box.appendChild(row);
     animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    animatePctText(row.querySelector('.capsule-pct'), previousPct, g.pct, 0);
     nextCapsuleWidths.set(g.brand, g.pct);
   }
   previousCapsuleWidths = nextCapsuleWidths;
