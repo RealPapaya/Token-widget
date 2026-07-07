@@ -628,6 +628,7 @@ function showWindowAfterInitialPaint(createdWindow) {
     if (createdWindow.isDestroyed()) return;
     createdWindow.setSkipTaskbar(true);
     createdWindow.show();
+    scheduleWidgetPin(createdWindow);
   }, 80);
 }
 
@@ -782,8 +783,12 @@ function createWindow() {
     if (createdWindow.isDestroyed()) return;
     createdWindow.setSkipTaskbar(true);
   });
-  if (settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
+  applyAlwaysOnTop(win);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  createdWindow.on('show', () => scheduleWidgetPin(createdWindow, 0));
+  createdWindow.on('focus', () => scheduleWidgetPin(createdWindow, 0));
+  createdWindow.on('blur', () => scheduleWidgetPin(createdWindow, 80));
 
   win.on('moved', () => {
     if (suppressMovePersistence) return;
@@ -833,12 +838,32 @@ function liveWindow() {
   return win && !win.isDestroyed() ? win : null;
 }
 
+function applyAlwaysOnTop(target = liveWindow()) {
+  if (!target || target.isDestroyed() || !settings.alwaysOnTop) return;
+  target.setSkipTaskbar(true);
+  target.setAlwaysOnTop(true, 'screen-saver');
+}
+
+function keepWidgetPinned(target = liveWindow()) {
+  applyAlwaysOnTop(target);
+  if (!target || target.isDestroyed() || !target.isVisible()) return;
+  if (typeof target.moveTop === 'function') target.moveTop();
+}
+
+function scheduleWidgetPin(target = liveWindow(), delay = 80) {
+  if (!target || target.isDestroyed()) return;
+  setTimeout(() => {
+    if (!target.isDestroyed()) keepWidgetPinned(target);
+  }, delay);
+}
+
 function showExistingOrCreateWindow() {
   const current = liveWindow();
   if (current) {
     current.setSkipTaskbar(true);
     current.show();
     current.focus();
+    scheduleWidgetPin(current, 0);
     return;
   }
   if (app.isReady()) createWindow();
@@ -855,6 +880,7 @@ function toggleWindowVisibility() {
   } else {
     current.setSkipTaskbar(true);
     current.show();
+    scheduleWidgetPin(current, 0);
   }
 }
 
@@ -927,7 +953,8 @@ function rebuildTrayMenu() {
       click: (item) => {
         settings.alwaysOnTop = item.checked;
         saveSettings();
-        win.setAlwaysOnTop(item.checked, 'screen-saver');
+        if (item.checked) applyAlwaysOnTop(win);
+        else win.setAlwaysOnTop(false);
       },
     },
     {
@@ -1134,7 +1161,10 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
     }
     case 'alwaysOnTop':
       settings.alwaysOnTop = !!value;
-      if (win && !win.isDestroyed()) win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
+      if (win && !win.isDestroyed()) {
+        if (settings.alwaysOnTop) applyAlwaysOnTop(win);
+        else win.setAlwaysOnTop(false);
+      }
       break;
     case 'openAtLogin':
       settings.openAtLogin = !!value;
