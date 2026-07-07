@@ -28,6 +28,7 @@ const LABELS = {
 };
 // keys where resets_at means "expires" (one-time credits), not a rolling reset
 const ONE_TIME = new Set(['cinder_cove']);
+const RESET_FIELDS = ['resets_at', 'reset_at', 'resetsAt', 'resetAt', 'expires_at', 'expiresAt'];
 
 function prettifyKey(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
@@ -91,6 +92,46 @@ function severityOf(pct) {
   return 'normal';
 }
 
+function normalizeResetTime(value) {
+  if (!value) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 100000000000 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
+  if (typeof value !== 'string') return null;
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+
+function resetTimeFromObject(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const field of RESET_FIELDS) {
+    const reset = normalizeResetTime(obj[field]);
+    if (reset) return reset;
+  }
+  return null;
+}
+
+function resetGroupForKey(key) {
+  if (key === 'five_hour') return 'five_hour';
+  if (key && key.startsWith('seven_day')) return 'seven_day';
+  return null;
+}
+
+function resetTimeForGauge(data, key, val) {
+  const direct = resetTimeFromObject(val);
+  if (direct) return direct;
+
+  const group = resetGroupForKey(key);
+  if (group && group !== key) {
+    const shared = resetTimeFromObject(data[group]);
+    if (shared) return shared;
+  }
+
+  const limits = data && data.limits;
+  if (!limits || typeof limits !== 'object') return null;
+  return resetTimeFromObject(limits[key]) || (group ? resetTimeFromObject(limits[group]) : null);
+}
 function fillClassForGauge(g) {
   const sev = severityOf(g.pct);
   if (sev !== 'normal') return sev;
@@ -115,7 +156,7 @@ function normalize(data) {
       key,
       label: LABELS[key] || prettifyKey(key),
       pct: Math.min(100, val.utilization),
-      resetsAt: val.resets_at || null,
+      resetsAt: resetTimeForGauge(data, key, val),
       oneTime: ONE_TIME.has(key),
       brand: 'claude',
       dollars: val.limit_dollars != null

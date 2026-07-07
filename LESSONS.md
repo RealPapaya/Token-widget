@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## verify-scripted-replace-insertions (2026-07-07)
+- Trap: Scripted exact-string replacements can partially apply, replacing a call site while missing the helper insertion when line endings or anchors differ.
+- Cost: The file can pass `node --check` but still fail at runtime with an undefined helper.
+- Rule: After any scripted replacement, read back the diff for both the call site and inserted definition; add a small runtime smoke test when the change introduces a helper.
+
 ## root-release-exe-locks-copy-step (2026-07-07)
 - Trap: If `usage widget.exe` is still running from the project root, a plain copy over that EXE fails with `EBUSY`.
 - Cost: `npm run dist:win` used to appear to fail after packaging succeeded, leaving the updated portable EXE only in `dist`.
