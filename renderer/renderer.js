@@ -202,6 +202,7 @@ let usagePeriodKey = 'week';
 let usageSessionMode = 'project';
 let usageInsightMode = 'tokens';
 let usageLoaded = false;
+let usingCachedUsage = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -1237,7 +1238,9 @@ function renderStatus() {
     const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
-    text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+    text.textContent = usingCachedUsage
+      ? `上次更新 ${t} · 正在更新...`
+      : `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
   }
 }
 
@@ -1440,6 +1443,7 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 
 window.widget.onUsage((payload) => {
   usageLoaded = true;
+  usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
   if (payload.ok) {
@@ -1448,6 +1452,7 @@ window.widget.onUsage((payload) => {
     lastData = payload.data;
     currentGauges = normalize(payload.data);
   } else {
+    usingCachedUsage = false;
     lastError = payload.error;
     if (payload.stale && payload.stale.data && !currentGauges.length) {
       lastData = payload.stale.data;

@@ -40,6 +40,7 @@ app.commandLine.appendSwitch('disable-gpu-compositing');
 
 // ---------- settings ----------
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+const usageCachePath = () => path.join(app.getPath('userData'), 'usage-cache.json');
 const DEFAULTS = {
   collapsed: false,
   alwaysOnTop: true,
@@ -67,6 +68,29 @@ function saveSettings() {
   saveTimer = setTimeout(() => {
     try { fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2)); } catch {}
   }, 300);
+}
+function loadUsageCache() {
+  try {
+    const cached = JSON.parse(fs.readFileSync(usageCachePath(), 'utf8'));
+    if (cached && cached.data && cached.fetchedAt) {
+      lastUsage = {
+        ok: true,
+        data: cached.data,
+        fetchedAt: cached.fetchedAt,
+        subscriptionType: cached.subscriptionType || null,
+      };
+    }
+  } catch {}
+}
+function saveUsageCache(result) {
+  if (!result || !result.ok || !result.data || !result.fetchedAt) return;
+  try {
+    fs.writeFileSync(usageCachePath(), JSON.stringify({
+      data: result.data,
+      fetchedAt: result.fetchedAt,
+      subscriptionType: result.subscriptionType || null,
+    }));
+  } catch {}
 }
 
 // ---------- usage fetching ----------
@@ -577,6 +601,7 @@ async function pollNow() {
   const claudeLocal = readClaudeLocalUsage();
   if (result.ok) {
     lastUsage = result;
+    saveUsageCache(result);
   }
   maybeNotify(result.ok ? result.data : null, codex);
   const payload = result.ok ? { ...result } : { ...result, stale: lastUsage };
@@ -590,6 +615,20 @@ function startPolling() {
   clearInterval(pollTimer);
   pollTimer = setInterval(pollNow, Math.max(1, settings.pollMinutes) * 60 * 1000);
   pollNow();
+}
+function cachedUsagePayload() {
+  if (!lastUsage || !lastUsage.data) return null;
+  const payload = { ...lastUsage, cached: true };
+  payload.claudeLocal = readClaudeLocalUsage();
+  payload.codex = readCodexUsage();
+  return payload;
+}
+function showWindowAfterInitialPaint(createdWindow) {
+  setTimeout(() => {
+    if (createdWindow.isDestroyed()) return;
+    createdWindow.setSkipTaskbar(true);
+    createdWindow.show();
+  }, 80);
 }
 
 // ---------- gauge extraction (shared logic with renderer, kept minimal here) ----------
@@ -721,6 +760,7 @@ function createWindow() {
     y: pos ? pos.y : undefined,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     resizable: true,
     minWidth: 200,
     minHeight: 52,
@@ -741,7 +781,6 @@ function createWindow() {
   createdWindow.once('ready-to-show', () => {
     if (createdWindow.isDestroyed()) return;
     createdWindow.setSkipTaskbar(true);
-    createdWindow.show();
   });
   if (settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -768,6 +807,9 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('init', { collapsed: settings.collapsed });
     win.webContents.send('settings', publicSettings());
+    const cached = cachedUsagePayload();
+    if (cached) win.webContents.send('usage', cached);
+    showWindowAfterInitialPaint(createdWindow);
     pollNow();
   });
 
@@ -1133,6 +1175,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     loadSettings();
+    loadUsageCache();
     createWindow();
     createTray();
     applyLoginItem();
