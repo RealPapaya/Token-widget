@@ -159,7 +159,7 @@ let usageViewOpen = false;
 let usageAnalysisSheet = 'sessions';
 let usagePeriodKey = 'week';
 let usageSessionMode = 'project';
-let usageInsightMode = 'cache';
+let usageInsightMode = 'tokens';
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -599,7 +599,7 @@ function appendInsightModeControls(box) {
   const controls = document.createElement('div');
   controls.className = 'usage-session-modes';
   const items = [
-    ['cache', '快取 Token'],
+    ['tokens', 'Token 組成'],
     ['patterns', '使用習慣'],
   ];
   for (const [mode, label] of items) {
@@ -607,7 +607,7 @@ function appendInsightModeControls(box) {
     btn.type = 'button';
     btn.className = mode === usageInsightMode ? 'active' : '';
     btn.textContent = label;
-    setTooltip(btn, mode === 'cache' ? '快取讀取、快取建立與一般輸入 Token' : '模型、時間、上下文、成本與子代理模式');
+    setTooltip(btn, mode === 'tokens' ? '輸入、快取、輸出與推理 Token 拆帳' : '模型、時間、上下文、成本與子代理模式');
     btn.addEventListener('click', () => {
       if (usageInsightMode === mode) return;
       usageInsightMode = mode;
@@ -834,36 +834,52 @@ function collectCodexHabits(codex) {
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
-function collectCacheHabits(sessions, brand) {
+function collectTokenCompositionHabits(sessions, brand) {
   sessions = Array.isArray(sessions) ? sessions : [];
   if (!sessions.length) return [];
   const total = sessionTotal(sessions, 'totalTokens');
   const input = sessionTotal(sessions, 'inputTokens');
   const cached = sessionTotal(sessions, 'cachedInputTokens');
   const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
-  const totalInput = cacheInputDenominator(input, cached, cacheWrite, total);
+  const output = sessionTotal(sessions, 'outputTokens');
+  const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
+  const tokenTotal = Math.max(total, input + cached + cacheWrite + output + reasoning);
   const habits = [
     {
       brand,
+      label: '一般輸入 Token',
+      pct: tokenTotal > 0 ? (input / tokenTotal) * 100 : null,
+      kind: '輸入',
+      detail: `${fmtTokens(input)} / ${fmtTokens(tokenTotal)} Token`,
+    },
+    {
+      brand,
       label: '快取讀取 Token',
-      pct: totalInput > 0 ? (cached / totalInput) * 100 : null,
+      pct: tokenTotal > 0 ? (cached / tokenTotal) * 100 : null,
       kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(totalInput)} 輸入 Token`,
+      detail: `${fmtTokens(cached)} / ${fmtTokens(tokenTotal)} Token`,
     },
   ];
   if (cacheWrite > 0) habits.push({
     brand,
     label: '快取建立 Token',
-    pct: totalInput > 0 ? (cacheWrite / totalInput) * 100 : null,
+    pct: tokenTotal > 0 ? (cacheWrite / tokenTotal) * 100 : null,
     kind: '快取',
-    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(totalInput)} 輸入 Token`,
+    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(tokenTotal)} Token`,
   });
-  if (input > 0) habits.push({
+  if (output > 0) habits.push({
     brand,
-    label: '一般輸入 Token',
-    pct: totalInput > 0 ? (input / totalInput) * 100 : null,
-    kind: '輸入',
-    detail: `${fmtTokens(input)} / ${fmtTokens(totalInput)} 輸入 Token`,
+    label: '輸出 Token',
+    pct: tokenTotal > 0 ? (output / tokenTotal) * 100 : null,
+    kind: '輸出',
+    detail: `${fmtTokens(output)} / ${fmtTokens(tokenTotal)} Token`,
+  });
+  if (reasoning > 0) habits.push({
+    brand,
+    label: '推理輸出 Token',
+    pct: tokenTotal > 0 ? (reasoning / tokenTotal) * 100 : null,
+    kind: '推理',
+    detail: `${fmtTokens(reasoning)} / ${fmtTokens(tokenTotal)} Token`,
   });
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
@@ -872,8 +888,6 @@ function collectUsagePatternHabits(sessions, brand) {
   sessions = Array.isArray(sessions) ? sessions : [];
   if (!sessions.length) return [];
   const total = sessionTotal(sessions, 'totalTokens');
-  const output = sessionTotal(sessions, 'outputTokens');
-  const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
   const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');
   const subagentHits = sessionTotal(sessions, 'subagentHits');
   const expensive = sessions.filter((s) => estimateSessionCost(s, brand) >= 1);
@@ -911,28 +925,12 @@ function collectUsagePatternHabits(sessions, brand) {
       detail: `${count} / ${hourTotal} 個工作階段`,
     });
   }
-  habits.push(
-    {
-      brand,
-      label: '超過 150K Token / 上下文的工作階段',
-      pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
-      kind: '大型上下文',
-      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
-    },
-    {
-      brand,
-      label: '輸出 Token 佔比',
-      pct: total > 0 ? (output / total) * 100 : null,
-      kind: '輸出',
-      detail: `${fmtTokens(output)} / ${fmtTokens(total)} Token`,
-    },
-  );
-  if (reasoning > 0) habits.push({
+  habits.push({
     brand,
-    label: '推理輸出 Token',
-    pct: output > 0 ? (reasoning / output) * 100 : null,
-    kind: '推理',
-    detail: `${fmtTokens(reasoning)} / ${fmtTokens(output)} 輸出 Token`,
+    label: '超過 150K Token / 上下文的工作階段',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
+    kind: '大型上下文',
+    detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
   });
   if (expensive.length) habits.push({
     brand,
@@ -959,8 +957,8 @@ function collectUsagePatternHabits(sessions, brand) {
 }
 
 function collectSessionHabits(sessions, brand) {
-  return usageInsightMode === 'cache'
-    ? collectCacheHabits(sessions, brand)
+  return usageInsightMode === 'tokens'
+    ? collectTokenCompositionHabits(sessions, brand)
     : collectUsagePatternHabits(sessions, brand);
 }
 
