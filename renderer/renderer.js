@@ -23,20 +23,26 @@ const LABELS = {
   seven_day_oauth_apps: '本週 · 連線應用程式',
   seven_day_cowork: '本週 · Cowork',
   cinder_cove: 'Claude Code / Cowork 額度',
+  amber_ladder: 'Amber Ladder 額度',
+  omelette_promotional: 'Omelette Promotional 額度',
   extra_usage: '加購用量額度',
 };
-const SPECIAL_CATEGORY_LABEL = '特殊分類額度';
 // keys where resets_at means "expires" (one-time credits), not a rolling reset
 const ONE_TIME = new Set(['cinder_cove']);
 const RESET_FIELDS = ['resets_at', 'reset_at', 'resetsAt', 'resetAt', 'expires_at', 'expiresAt'];
 
+function normalizeGaugeKey(key) {
+  return String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+}
+
 function isSpecialCategoryKey(key) {
-  const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+  const normalized = normalizeGaugeKey(key);
   return normalized === 'amber_ladder' || normalized === 'omelette_promotional';
 }
 
 function labelForGauge(key) {
-  return isSpecialCategoryKey(key) ? SPECIAL_CATEGORY_LABEL : (LABELS[key] || prettifyKey(key));
+  const normalized = normalizeGaugeKey(key);
+  return LABELS[key] || LABELS[normalized] || prettifyKey(key);
 }
 
 function prettifyKey(key) {
@@ -156,7 +162,7 @@ function pctClassForGauge(g) {
 function normalize(data) {
   const skip = new Set(['limits', 'spend', 'extra_usage', 'member_dashboard_available']);
   const gauges = [];
-  const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+  const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'amber_ladder', 'omelette_promotional'];
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
     if (!showAmberLadder && isSpecialCategoryKey(key)) continue;
@@ -174,7 +180,7 @@ function normalize(data) {
     });
   }
   gauges.sort((a, b) => {
-    const ia = order.indexOf(a.key), ib = order.indexOf(b.key);
+    const ia = order.indexOf(normalizeGaugeKey(a.key)), ib = order.indexOf(normalizeGaugeKey(b.key));
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
   const eu = data.extra_usage;
@@ -490,7 +496,7 @@ function fmtCost(n) {
 }
 
 const USAGE_PERIODS = [
-  { key: 'day', label: '1日', days: 1, icon: 'M12 7v5l3 2' },
+  { key: 'day', label: '1日', days: 1, icon: 'M8 2v3M16 2v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM12 12v6M10.5 13.5 12 12l1.5 1.5' },
   { key: 'week', label: '1週', days: 7, icon: 'M8 2v3M16 2v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
   { key: 'month', label: '1月', days: 30, icon: 'M4 6h16M7 3v6M17 3v6M7 13h3M14 13h3M7 17h3M14 17h3M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
   { key: 'all', label: '全部', days: null, icon: 'M4 6h16M4 12h16M4 18h16' },
