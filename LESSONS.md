@@ -15,6 +15,10 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## release-workflow-asset-name-matches-builder-output (2026-07-07)
+- Win: GitHub Actions release assets now use the same `usage widget.exe` name produced by electron-builder and copied to the repo root.
+- Benefit: Main/master pushes can update the fixed `latest` Release without failing on a missing legacy `Claude Usage Widget.exe` path.
+- Rule: When changing `build.win.artifactName` or `scripts/copy-release-exe.js` output names, update `.github/workflows/release-windows.yml` asset paths and README download text in the same change.
 ## powershell-scripted-edits-need-small-verified-anchors (2026-07-07)
 - Trap: Large PowerShell replacement scripts are easy to break with quoting, regex escaping, or same-line comments even when the intended edit is small.
 - Cost: Failed scripted edits waste time and can risk partial changes if writes are not delayed until all anchors pass.

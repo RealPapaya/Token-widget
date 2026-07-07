@@ -2,13 +2,13 @@
 
 Windows 桌面小工具，用來顯示 Claude Code / Codex 的用量狀態、倒數時間與簡易告警。
 
-[下載最新版 EXE](https://github.com/RealPapaya/Token-widget/releases/latest/download/Claude%20Usage%20Widget.exe) | [查看所有 Releases](https://github.com/RealPapaya/Token-widget/releases) | [GitHub Actions 建置紀錄](https://github.com/RealPapaya/Token-widget/actions)
+[下載最新版 EXE](https://github.com/RealPapaya/Token-widget/releases/latest/download/usage%20widget.exe) | [查看所有 Releases](https://github.com/RealPapaya/Token-widget/releases) | [GitHub Actions 建置紀錄](https://github.com/RealPapaya/Token-widget/actions)
 
 ## 下載
 
 1. 到 [Releases](https://github.com/RealPapaya/Token-widget/releases)。
 2. 打開最新版本。
-3. 在 Assets 下載 `Claude Usage Widget.exe`。
+3. 在 Assets 下載 `usage widget.exe`。
 4. 直接執行，不需要另外安裝 Node.js、npm 或 `node_modules`。
 
 推到 `main` / `master` 後，GitHub Actions 會自動建立或更新 `latest` Release。若要建立正式版本 Release，推一個 `v*` tag：
@@ -18,7 +18,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub Actions 會自動建置 Windows portable EXE，並把 `Claude Usage Widget.exe` 放到 Release Assets。GitHub 首頁右側的 Releases 區塊會在第一個 Release 建立後自動顯示並更新。
+GitHub Actions 會自動建置 Windows portable EXE，並把 `usage widget.exe` 放到 Release Assets。GitHub 首頁右側的 Releases 區塊會在第一個 Release 建立後自動顯示並更新。
 
 ## Windows SmartScreen
 
@@ -56,7 +56,7 @@ npm run dist:win
 建置完成後，根目錄會產生：
 
 ```text
-Claude Usage Widget.exe
+usage widget.exe
 ```
 
 ## 功能摘要
