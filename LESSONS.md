@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## powershell-js-regex-backslash-escaping (2026-07-07)
+- Trap: PowerShell scripted edits that emit JavaScript regex literals can accidentally write `/[-\\s]+/g` when the intended regex is `/[-\s]+/g`.
+- Cost: The code can pass syntax checks while changing runtime matching behavior for keys containing spaces.
+- Rule: After scripted edits that touch JS regex literals, inspect the diff for single-vs-double backslashes and run a targeted `rg` read-back before verification.
+
 ## apply-patch-may-hit-windows-sandbox-logon-error (2026-07-07)
 - Trap: The harness apply_patch tool can fail in this workspace with `CreateProcessWithLogonW failed: 1385` before reading editable project files.
 - Cost: A normal patch path can stall even when the intended edit is small and inside the writable repo.

@@ -23,12 +23,21 @@ const LABELS = {
   seven_day_oauth_apps: '本週 · 連線應用程式',
   seven_day_cowork: '本週 · Cowork',
   cinder_cove: 'Claude Code / Cowork 額度',
-  amber_ladder: 'Amber Ladder 額度',
   extra_usage: '加購用量額度',
 };
+const SPECIAL_CATEGORY_LABEL = '特殊分類額度';
 // keys where resets_at means "expires" (one-time credits), not a rolling reset
 const ONE_TIME = new Set(['cinder_cove']);
 const RESET_FIELDS = ['resets_at', 'reset_at', 'resetsAt', 'resetAt', 'expires_at', 'expiresAt'];
+
+function isSpecialCategoryKey(key) {
+  const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+  return normalized === 'amber_ladder' || normalized === 'omelette_promotional';
+}
+
+function labelForGauge(key) {
+  return isSpecialCategoryKey(key) ? SPECIAL_CATEGORY_LABEL : (LABELS[key] || prettifyKey(key));
+}
 
 function prettifyKey(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
@@ -146,15 +155,15 @@ function pctClassForGauge(g) {
 // ---------- normalize API payload into gauge list ----------
 function normalize(data) {
   const skip = new Set(['limits', 'spend', 'extra_usage', 'member_dashboard_available']);
-  if (!showAmberLadder) skip.add('amber_ladder');
   const gauges = [];
   const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
+    if (!showAmberLadder && isSpecialCategoryKey(key)) continue;
     if (typeof val.utilization !== 'number') continue;
     gauges.push({
       key,
-      label: LABELS[key] || prettifyKey(key),
+      label: labelForGauge(key),
       pct: Math.min(100, val.utilization),
       resetsAt: resetTimeForGauge(data, key, val),
       oneTime: ONE_TIME.has(key),

@@ -54,6 +54,11 @@ const DEFAULTS = {
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
 };
+function isSpecialCategoryKey(key) {
+  const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+  return normalized === 'amber_ladder' || normalized === 'omelette_promotional';
+}
+
 let settings = { ...DEFAULTS };
 
 function loadSettings() {
@@ -639,6 +644,7 @@ function extractGauges(data) {
   const out = [];
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
+    if (!settings.showAmberLadder && isSpecialCategoryKey(key)) continue;
     if (typeof val.utilization !== 'number') continue;
     out.push({ key, utilization: val.utilization });
   }
@@ -988,7 +994,7 @@ function rebuildTrayMenu() {
       },
     },
     {
-      label: '顯示 Amber Ladder',
+      label: '顯示特殊分類',
       type: 'checkbox',
       checked: settings.showAmberLadder,
       click: (item) => {
