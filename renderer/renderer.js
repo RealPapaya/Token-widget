@@ -111,7 +111,6 @@ function normalize(data) {
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
     if (typeof val.utilization !== 'number') continue;
-    if (val.limit_dollars == null && !val.resets_at && val.utilization <= 0) continue;
     gauges.push({
       key,
       label: LABELS[key] || prettifyKey(key),
@@ -453,6 +452,13 @@ function sessionTotal(sessions, key) {
   return sessions.reduce((sum, s) => sum + (Number(s[key]) || 0), 0);
 }
 
+function cacheInputDenominator(input, cached, cacheWrite, total) {
+  const cacheTokens = Number(cached) || 0;
+  const inputTokens = (Number(input) || 0) + cacheTokens + (Number(cacheWrite) || 0);
+  if (inputTokens >= cacheTokens) return inputTokens;
+  return Math.max(cacheTokens, Number(total) || 0);
+}
+
 function rateForClaudeSession(session) {
   const model = String(session && session.model || '').toLowerCase();
   if (model.includes('opus')) return CLAUDE_RATES_PER_MTOK.opus;
@@ -748,7 +754,7 @@ function collectCodexHabits(codex) {
   const input = sessions.reduce((sum, s) => sum + (Number(s.inputTokens) || 0), 0);
   const cached = sessions.reduce((sum, s) => sum + (Number(s.cachedInputTokens) || 0), 0);
   const cacheWrite = sessions.reduce((sum, s) => sum + (Number(s.cacheCreationInputTokens) || 0), 0);
-  const totalInput = input + cached + cacheWrite;
+  const totalInput = cacheInputDenominator(input, cached, cacheWrite, total);
   const output = sessions.reduce((sum, s) => sum + (Number(s.outputTokens) || 0), 0);
   const reasoning = sessions.reduce((sum, s) => sum + (Number(s.reasoningOutputTokens) || 0), 0);
   const workflowHits = sessions.reduce((sum, s) => sum + (Number(s.workflowSubagentHits) || 0), 0);
@@ -800,7 +806,7 @@ function collectSessionHabits(sessions, brand) {
   const input = sessionTotal(sessions, 'inputTokens');
   const cached = sessionTotal(sessions, 'cachedInputTokens');
   const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
-  const totalInput = input + cached + cacheWrite;
+  const totalInput = cacheInputDenominator(input, cached, cacheWrite, total);
   const output = sessionTotal(sessions, 'outputTokens');
   const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
   const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');

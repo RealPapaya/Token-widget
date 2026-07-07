@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## root-release-exe-locks-copy-step (2026-07-07)
+- Trap: If `usage widget.exe` is still running from the project root, `scripts/copy-release-exe.js` fails with `EBUSY` when copying `dist\usage widget.exe` over it.
+- Cost: `npm run dist:win` appears to fail after packaging succeeds, leaving the updated portable EXE only in `dist`.
+- Rule: Before rerunning the release-copy step, stop the root `usage widget.exe` process or launch from `dist` during build testing.
+
 ## powershell-selectobject-sandbox-read-failure (2026-07-06)
 - Trap: Get-Content | Select-Object -Skip style reads can hit sandbox CreateProcessWithLogonW failed: 1385 in this workspace even when narrower `rg -n -C` reads succeed.
 - Cost: It blocks review-context gathering and wastes time on a tooling path that looks valid but is unreliable here.

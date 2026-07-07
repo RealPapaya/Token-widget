@@ -600,8 +600,6 @@ function extractGauges(data) {
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
     if (typeof val.utilization !== 'number') continue;
-    const meaningful = val.limit_dollars != null || val.resets_at || val.utilization > 0;
-    if (!meaningful) continue;
     out.push({ key, utilization: val.utilization });
   }
   if (data.extra_usage && data.extra_usage.is_enabled) {
