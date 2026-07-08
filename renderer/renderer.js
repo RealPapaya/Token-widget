@@ -219,6 +219,8 @@ let usageInsightMode = 'tokens';
 let usageLoaded = false;
 let usingCachedUsage = false;
 let manualRefreshActive = false;
+let manualRefreshPendingGreen = false;
+let manualRefreshSawUsage = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -1257,7 +1259,10 @@ function renderGauges() {
 function renderStatus() {
   const dot = $('status-dot');
   const text = $('status-text');
+  let statusColor = 'green';
+
   if (manualRefreshActive) {
+    statusColor = 'loading';
     dot.classList.remove('err');
     dot.classList.add('loading');
     if (lastFetchedAt) {
@@ -1268,9 +1273,8 @@ function renderStatus() {
     } else {
       text.textContent = '正在更新用量限制...';
     }
-    return;
-  }
-  if (lastError) {
+  } else if (lastError) {
+    statusColor = 'red';
     dot.classList.remove('loading');
     dot.classList.add('err');
     const msgs = {
@@ -1281,31 +1285,47 @@ function renderStatus() {
     };
     text.textContent = msgs[lastError] || `更新失敗（${lastError}）`;
   } else if (!usageLoaded) {
+    statusColor = 'loading';
     dot.classList.remove('err');
     dot.classList.add('loading');
     text.textContent = '正在讀取用量限制...';
   } else if (lastFetchedAt) {
-    dot.classList.remove('err', 'loading');
     const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
-    text.textContent = usingCachedUsage
-      ? `上次更新 ${t} · 正在更新...`
-      : `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+    if (usingCachedUsage) {
+      statusColor = 'loading';
+      dot.classList.remove('err');
+      dot.classList.add('loading');
+      text.textContent = `上次更新 ${t} · 正在更新...`;
+    } else {
+      statusColor = 'green';
+      dot.classList.remove('err', 'loading');
+      text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+    }
   }
+
+  const statusIsGreen = !dot.classList.contains('err') && !dot.classList.contains('loading');
+  if (manualRefreshPendingGreen && manualRefreshSawUsage && statusIsGreen) manualRefreshPendingGreen = false;
+  syncRefreshButton(manualRefreshPendingGreen);
+}
+
+function syncRefreshButton(active) {
+  const btn = $('btn-refresh');
+  if (!btn) return;
+  btn.classList.toggle('is-refreshing', active);
+  btn.setAttribute('aria-busy', active ? 'true' : 'false');
+  setTooltip(btn, active ? '等待更新成功' : '立即更新');
 }
 
 function setManualRefreshActive(active) {
   manualRefreshActive = active === true;
-  const btn = $('btn-refresh');
-  if (btn) {
-    btn.classList.toggle('is-refreshing', manualRefreshActive);
-    btn.setAttribute('aria-busy', manualRefreshActive ? 'true' : 'false');
-    setTooltip(btn, manualRefreshActive ? '正在更新' : '立即更新');
+  if (manualRefreshActive) {
+    manualRefreshPendingGreen = true;
+    manualRefreshSawUsage = false;
   }
   renderStatus();
 }
-
 function topGaugeByBrand(gauges) {
   const brands = ['claude', 'codex'];
   return brands.map((brand) => gauges
@@ -1524,6 +1544,7 @@ window.widget.onUsage((payload) => {
       lastFetchedAt = payload.stale.fetchedAt;
     }
   }
+  if (manualRefreshPendingGreen) manualRefreshSawUsage = true;
   renderGauges();
   if (usageViewOpen) renderUsageView();
 });
