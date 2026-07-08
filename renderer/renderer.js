@@ -218,6 +218,8 @@ let usageSessionMode = 'project';
 let usageInsightMode = 'tokens';
 let usageLoaded = false;
 let usingCachedUsage = false;
+let manualRefreshActive = false;
+let manualRefreshTimer = null;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -1256,6 +1258,19 @@ function renderGauges() {
 function renderStatus() {
   const dot = $('status-dot');
   const text = $('status-text');
+  if (manualRefreshActive) {
+    dot.classList.remove('err');
+    dot.classList.add('loading');
+    if (lastFetchedAt) {
+      const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      });
+      text.textContent = `上次更新 ${t} · 正在更新...`;
+    } else {
+      text.textContent = '正在更新用量限制...';
+    }
+    return;
+  }
   if (lastError) {
     dot.classList.remove('loading');
     dot.classList.add('err');
@@ -1279,6 +1294,26 @@ function renderStatus() {
       ? `上次更新 ${t} · 正在更新...`
       : `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
   }
+}
+
+function setManualRefreshActive(active) {
+  manualRefreshActive = active === true;
+  if (manualRefreshTimer) {
+    clearTimeout(manualRefreshTimer);
+    manualRefreshTimer = null;
+  }
+
+  const btn = $('btn-refresh');
+  if (btn) {
+    btn.classList.toggle('is-refreshing', manualRefreshActive);
+    btn.setAttribute('aria-busy', manualRefreshActive ? 'true' : 'false');
+    setTooltip(btn, manualRefreshActive ? '正在更新' : '立即更新');
+  }
+
+  if (manualRefreshActive) {
+    manualRefreshTimer = setTimeout(() => setManualRefreshActive(false), 45000);
+  }
+  renderStatus();
 }
 
 function topGaugeByBrand(gauges) {
@@ -1478,6 +1513,7 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 }
 
 window.widget.onUsage((payload) => {
+  setManualRefreshActive(false);
   usageLoaded = true;
   usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
@@ -1502,7 +1538,10 @@ window.widget.onUsage((payload) => {
 
 $('btn-collapse').addEventListener('click', () => window.widget.toggleCollapse());
 $('btn-expand').addEventListener('click', () => window.widget.toggleCollapse());
-$('btn-refresh').addEventListener('click', () => window.widget.refresh());
+$('btn-refresh').addEventListener('click', () => {
+  setManualRefreshActive(true);
+  window.widget.refresh();
+});
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   window.widget.openMenu();
