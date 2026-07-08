@@ -21,6 +21,7 @@ const APP_DISPLAY_NAME = 'usage widget';
 const LOGIN_ITEM_NAME = 'Claude Usage Widget';
 const LOGIN_ITEM_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const LEGACY_LOGIN_ITEM_NAMES = ['electron.app.Claude Usage Widget', 'electron.app.Electron'];
+const TRAY_GUID = '6f20d750-2f3f-4d4e-8a47-f3b40d4c6f27';
 
 let win = null;
 let tray = null;
@@ -33,10 +34,14 @@ let resizePersistenceTimer = null;
 let movePersistenceTimer = null;
 let preferredPos = null;
 const isSmokeTest = process.argv.includes('--screenshot');
+const isWindows = process.platform === 'win32';
+const isMac = process.platform === 'darwin';
 
 // Transparent frameless windows can render corrupted on some Windows GPU/driver combinations.
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu-compositing');
+if (isWindows) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
 
 // ---------- settings ----------
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
@@ -682,11 +687,19 @@ function maybeNotify(data, codex) {
 
 // ---------- window ----------
 function appIconPath() {
-  return path.join(__dirname, 'assets', 'app.ico');
+  return path.join(__dirname, 'assets', isMac ? 'app.icns' : 'app.ico');
 }
 
 function trayIconPath() {
-  return process.platform === 'win32' ? appIconPath() : path.join(__dirname, 'assets', 'tray.png');
+  if (isWindows) return appIconPath();
+  if (isMac) return path.join(__dirname, 'assets', 'trayTemplate.png');
+  return path.join(__dirname, 'assets', 'tray.png');
+}
+
+function trayIconImage() {
+  const icon = nativeImage.createFromPath(trayIconPath());
+  if (isMac && !icon.isEmpty()) icon.setTemplateImage(true);
+  return icon;
 }
 
 function validatePos(pos) {
@@ -844,10 +857,29 @@ function liveWindow() {
   return win && !win.isDestroyed() ? win : null;
 }
 
+function setMacWorkspacePinned(target, pinned) {
+  if (!isMac || !target || target.isDestroyed()) return;
+  target.setVisibleOnAllWorkspaces(pinned, {
+    visibleOnFullScreen: pinned,
+    skipTransformProcessType: true,
+  });
+  if (typeof target.setHiddenInMissionControl === 'function') {
+    target.setHiddenInMissionControl(pinned);
+  }
+}
+
 function applyAlwaysOnTop(target = liveWindow()) {
   if (!target || target.isDestroyed() || !settings.alwaysOnTop) return;
   target.setSkipTaskbar(true);
+  setMacWorkspacePinned(target, true);
   target.setAlwaysOnTop(true, 'screen-saver');
+}
+
+function clearAlwaysOnTop(target = liveWindow()) {
+  if (!target || target.isDestroyed()) return;
+  setMacWorkspacePinned(target, false);
+  target.setAlwaysOnTop(false);
+  target.setSkipTaskbar(true);
 }
 
 function keepWidgetPinned(target = liveWindow()) {
@@ -960,7 +992,7 @@ function rebuildTrayMenu() {
         settings.alwaysOnTop = item.checked;
         saveSettings();
         if (item.checked) applyAlwaysOnTop(win);
-        else win.setAlwaysOnTop(false);
+        else clearAlwaysOnTop(win);
       },
     },
     {
@@ -1044,16 +1076,23 @@ function rebuildTrayMenu() {
     { type: 'separator' },
     { label: '結束', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
-  tray.setContextMenu(menu);
+  if (!isMac) tray.setContextMenu(menu);
   return menu;
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(trayIconPath());
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  const icon = trayIconImage();
+  const trayImage = icon.isEmpty() ? nativeImage.createEmpty() : icon;
+  tray = isMac ? new Tray(trayImage, TRAY_GUID) : new Tray(trayImage);
   tray.setToolTip(APP_DISPLAY_NAME);
   rebuildTrayMenu();
   tray.on('click', () => toggleWindowVisibility());
+  if (isMac) {
+    tray.on('right-click', () => {
+      const menu = rebuildTrayMenu();
+      if (menu) tray.popUpContextMenu(menu);
+    });
+  }
 }
 
 function updateTrayTooltip(data, codex) {
@@ -1063,6 +1102,13 @@ function updateTrayTooltip(data, codex) {
   if (!gauges.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
   const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
   tray.setToolTip(`${APP_DISPLAY_NAME} - 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
+}
+
+function configureMacApp() {
+  if (!isMac) return;
+  Menu.setApplicationMenu(null);
+  if (typeof app.setActivationPolicy === 'function') app.setActivationPolicy('accessory');
+  if (app.dock && typeof app.dock.hide === 'function') app.dock.hide();
 }
 
 // ---------- login item ----------
@@ -1085,7 +1131,7 @@ function packagedLoginItemPath() {
 }
 
 function clearLegacyLoginItems() {
-  if (process.platform !== 'win32') return;
+  if (!isWindows) return;
   for (const name of LEGACY_LOGIN_ITEM_NAMES) {
     try { app.setLoginItemSettings({ openAtLogin: false, name }); } catch {}
   }
@@ -1112,6 +1158,11 @@ function setRunLoginItem(exePath, openAtLogin) {
 }
 
 function applyLoginItem() {
+  if (isMac) {
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.openAtLogin });
+    return;
+  }
+
   if (!app.isPackaged) {
     app.setLoginItemSettings({
       openAtLogin: settings.openAtLogin,
@@ -1123,7 +1174,7 @@ function applyLoginItem() {
   }
 
   clearLegacyLoginItems();
-  const portablePath = process.platform === 'win32' ? portableLoginItemPath() : null;
+  const portablePath = isWindows ? portableLoginItemPath() : null;
   if (portablePath) {
     setRunLoginItem(portablePath, settings.openAtLogin);
     return;
@@ -1169,7 +1220,7 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
       settings.alwaysOnTop = !!value;
       if (win && !win.isDestroyed()) {
         if (settings.alwaysOnTop) applyAlwaysOnTop(win);
-        else win.setAlwaysOnTop(false);
+        else clearAlwaysOnTop(win);
       }
       break;
     case 'openAtLogin':
@@ -1209,7 +1260,12 @@ if (!gotLock) {
     showExistingOrCreateWindow();
   });
 
+  app.on('activate', () => {
+    showExistingOrCreateWindow();
+  });
+
   app.whenReady().then(() => {
+    configureMacApp();
     loadSettings();
     loadUsageCache();
     createWindow();

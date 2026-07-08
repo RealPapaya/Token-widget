@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## powershell-converttojson-escapes-package-scripts (2026-07-08)
+- Trap: PowerShell 5 ConvertTo-Json escapes npm script && operators as \u0026\u0026 and can heavily reformat package.json.
+- Cost: Platform packaging changes become noisy to review and the script text can be misread while debugging build commands.
+- Rule: For package.json edits in this repo, prefer Node JSON.parse/stringify or exact anchor edits; avoid PowerShell ConvertTo-Json for npm scripts.
+
 ## powershell-js-regex-backslash-escaping (2026-07-07)
 - Trap: PowerShell scripted edits that emit JavaScript regex literals can accidentally write `/[-\\s]+/g` when the intended regex is `/[-\s]+/g`.
 - Cost: The code can pass syntax checks while changing runtime matching behavior for keys containing spaces.

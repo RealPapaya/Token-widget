@@ -1,12 +1,14 @@
 {
   "name": "claude-usage-widget",
   "version": "1.0.0",
-  "description": "Windows desktop widget showing Claude Code usage limits with countdown",
+  "description": "Desktop widget showing Claude Code, Codex, and API usage limits with countdown",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dist:win": "npx --yes electron-builder --win portable && node scripts/copy-release-exe.js",
-    "gen-icon": "node scripts/gen-tray-icon.js && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-app-icon.ps1"
+    "dist:mac": "node scripts/gen-tray-icon.js && npx --yes electron-builder --mac dmg zip",
+    "gen-icon": "node scripts/gen-tray-icon.js && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-app-icon.ps1",
+    "gen-icon:mac": "node scripts/gen-tray-icon.js"
   },
   "build": {
     "appId": "com.morrishsueh.claudeusagewidget",
@@ -33,6 +35,30 @@
         }
       ],
       "icon": "assets/app.ico"
+    },
+    "mac": {
+      "artifactName": "usage widget-${arch}.${ext}",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "assets/app.icns",
+      "extendInfo": {
+        "LSUIElement": true
+      }
     }
   },
   "author": "morris_hsueh",

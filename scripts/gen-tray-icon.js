@@ -3,6 +3,16 @@ const path = require('path');
 const zlib = require('zlib');
 
 const COLOR = [0xd9, 0x77, 0x57]; // Claude orange
+const TEMPLATE_COLOR = [0x00, 0x00, 0x00];
+const APP_ICON_SIZES = [
+  { size: 16, type: 'icp4' },
+  { size: 32, type: 'icp5' },
+  { size: 64, type: 'icp6' },
+  { size: 128, type: 'ic07' },
+  { size: 256, type: 'ic08' },
+  { size: 512, type: 'ic09' },
+  { size: 1024, type: 'ic10' },
+];
 const RAYS = 12;
 const LENGTHS = [1.0, 0.72, 0.9, 0.68, 1.0, 0.78, 0.92, 0.7, 1.0, 0.74, 0.9, 0.78];
 
@@ -32,15 +42,15 @@ function coverage(px, py, size) {
   return hits / 9;
 }
 
-function buildRGBA(size) {
+function buildRGBA(size, color = COLOR) {
   const buf = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const a = coverage(x, y, size);
       const o = (y * size + x) * 4;
-      buf[o] = COLOR[0];
-      buf[o + 1] = COLOR[1];
-      buf[o + 2] = COLOR[2];
+      buf[o] = color[0];
+      buf[o + 1] = color[1];
+      buf[o + 2] = color[2];
       buf[o + 3] = Math.round(a * 255);
     }
   }
@@ -114,7 +124,31 @@ function encodeICO(images) {
   return Buffer.concat([header, ...entries, ...images.map((img) => img.data)]);
 }
 
+function encodeICNS(images) {
+  const entries = images.map((img) => {
+    const header = Buffer.alloc(8);
+    header.write(img.type, 0, 4, 'ascii');
+    header.writeUInt32BE(img.data.length + 8, 4);
+    return Buffer.concat([header, img.data]);
+  });
+  const header = Buffer.alloc(8);
+  header.write('icns', 0, 4, 'ascii');
+  header.writeUInt32BE(8 + entries.reduce((sum, entry) => sum + entry.length, 0), 4);
+  return Buffer.concat([header, ...entries]);
+}
+
 const outDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'tray.png'), encodePNG(32, buildRGBA(32)));
+fs.writeFileSync(path.join(outDir, 'trayTemplate.png'), encodePNG(16, buildRGBA(16, TEMPLATE_COLOR)));
+fs.writeFileSync(path.join(outDir, 'trayTemplate@2x.png'), encodePNG(32, buildRGBA(32, TEMPLATE_COLOR)));
+fs.writeFileSync(path.join(outDir, 'app.icns'), encodeICNS(
+  APP_ICON_SIZES.map(({ size, type }) => ({
+    type,
+    data: encodePNG(size, buildRGBA(size)),
+  }))
+));
 console.log('wrote assets/tray.png');
+console.log('wrote assets/trayTemplate.png');
+console.log('wrote assets/trayTemplate@2x.png');
+console.log('wrote assets/app.icns');
