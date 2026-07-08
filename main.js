@@ -1197,7 +1197,14 @@ ipcMain.on('resize-height', (_e, { height }) => {
   applyWidgetBounds({ width: modeWidth(), height });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
-ipcMain.on('refresh', () => pollNow());
+ipcMain.on('refresh', async () => {
+  if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: true });
+  try {
+    await pollNow();
+  } finally {
+    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: false });
+  }
+});
 ipcMain.on('open-menu', () => {
   const menu = rebuildTrayMenu();
   if (menu) menu.popup({ window: win });

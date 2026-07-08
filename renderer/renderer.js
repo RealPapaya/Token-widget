@@ -219,7 +219,6 @@ let usageInsightMode = 'tokens';
 let usageLoaded = false;
 let usingCachedUsage = false;
 let manualRefreshActive = false;
-let manualRefreshTimer = null;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -1298,20 +1297,11 @@ function renderStatus() {
 
 function setManualRefreshActive(active) {
   manualRefreshActive = active === true;
-  if (manualRefreshTimer) {
-    clearTimeout(manualRefreshTimer);
-    manualRefreshTimer = null;
-  }
-
   const btn = $('btn-refresh');
   if (btn) {
     btn.classList.toggle('is-refreshing', manualRefreshActive);
     btn.setAttribute('aria-busy', manualRefreshActive ? 'true' : 'false');
     setTooltip(btn, manualRefreshActive ? '正在更新' : '立即更新');
-  }
-
-  if (manualRefreshActive) {
-    manualRefreshTimer = setTimeout(() => setManualRefreshActive(false), 45000);
   }
   renderStatus();
 }
@@ -1410,6 +1400,9 @@ function applyCollapsed(c) {
 // ---------- wiring ----------
 window.widget.onInit(({ collapsed: c }) => applyCollapsed(c));
 window.widget.onCollapsedChanged((c) => applyCollapsed(c));
+window.widget.onRefreshState((state) => {
+  setManualRefreshActive(state && state.active === true);
+});
 
 window.widget.onSettings((s) => {
   showClaude = s.showClaude !== false;
@@ -1513,7 +1506,6 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 }
 
 window.widget.onUsage((payload) => {
-  setManualRefreshActive(false);
   usageLoaded = true;
   usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;

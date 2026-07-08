@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('widget', {
   onInit: (cb) => ipcRenderer.on('init', (_e, d) => cb(d)),
   onUsage: (cb) => ipcRenderer.on('usage', (_e, d) => cb(d)),
+  onRefreshState: (cb) => ipcRenderer.on('refresh-state', (_e, d) => cb(d)),
   onCollapsedChanged: (cb) => ipcRenderer.on('collapsed-changed', (_e, d) => cb(d)),
   onSettings: (cb) => ipcRenderer.on('settings', (_e, d) => cb(d)),
   resize: (width, height) => ipcRenderer.send('resize', { width, height }),
