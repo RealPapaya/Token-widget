@@ -585,8 +585,21 @@ function readCodexUsage() {
     return { pct, resetsAt: resetsSec ? new Date(resetsSec * 1000).toISOString() : null };
   };
   const rl = snap.rl;
-  const five = mk(rl.primary);
-  const week = mk(rl.secondary);
+  // Codex reports windows in `primary`/`secondary`, but which is which is not
+  // fixed: as of 2026-07 Codex temporarily dropped the 5h window, leaving only
+  // the weekly window (window_minutes 10080) in `primary`. Classify by window
+  // length instead of slot position so a lone weekly window is never mislabeled
+  // as the 5-hour gauge. window_minutes ≈ 300 → 5h; ≈ 10080 → weekly.
+  let five = null;
+  let week = null;
+  for (const w of [rl.primary, rl.secondary]) {
+    if (!w || typeof w.used_percent !== 'number') continue;
+    const g = mk(w);
+    if (!g) continue;
+    const wm = w.window_minutes || 0;
+    if (wm > 0 && wm <= 1440) { if (!five) five = g; } // ≤ 1 day → short (5h) window
+    else if (!week) week = g;                          // weekly (or unknown long window)
+  }
   if (!five && !week) return null;
   return {
     fiveHour: five,
