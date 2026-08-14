@@ -13,6 +13,8 @@ const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const CLAUDE_STATS_PATH = path.join(os.homedir(), '.claude', 'stats-cache.json');
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
+const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
+const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 const CODEX_SESSION_BREAKDOWN_LIMIT = 240;
@@ -59,9 +61,10 @@ const DEFAULTS = {
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
 };
+const ONE_TIME = new Set(['cinder_cove']);
 function isSpecialCategoryKey(key) {
   const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
-  return normalized === 'amber_ladder' || normalized === 'omelette_promotional';
+  return !ONE_TIME.has(normalized) && !/^(?:five_hour|seven_day)(?:_|$)/.test(normalized);
 }
 
 let settings = { ...DEFAULTS };
@@ -145,9 +148,8 @@ async function fetchUsage() {
 // ---------- Codex (OpenAI) usage ----------
 // Codex CLI (auth_mode: chatgpt) persists rate-limit snapshots inside its
 // session rollout files (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) as
-// `token_count` events. `primary` = 5h window (window_minutes 300),
-// `secondary` = weekly window (10080). We read the newest snapshot; this
-// mirrors what Codex's own /status shows and needs no network call.
+// `token_count` events. They provide an offline fallback when the live Codex
+// usage endpoint is unavailable.
 function collectRolloutFiles(dir, out) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -560,9 +562,7 @@ function latestCodexRateLimits() {
   return best;
 }
 
-function readCodexUsage() {
-  const snap = latestCodexRateLimits();
-  if (!snap) return null;
+function codexUsageFromRateLimits(rl, updatedAt) {
   const nowSec = Date.now() / 1000;
   // A snapshot is only rewritten when Codex is actually used, so after a window
   // rolls over the newest snapshot still shows the pre-reset percentage. If its
@@ -584,7 +584,6 @@ function readCodexUsage() {
     }
     return { pct, resetsAt: resetsSec ? new Date(resetsSec * 1000).toISOString() : null };
   };
-  const rl = snap.rl;
   // Codex reports windows in `primary`/`secondary`, but which is which is not
   // fixed: as of 2026-07 Codex temporarily dropped the 5h window, leaving only
   // the weekly window (window_minutes 10080) in `primary`. Classify by window
@@ -605,9 +604,50 @@ function readCodexUsage() {
     fiveHour: five,
     sevenDay: week,
     planType: rl.plan_type || null,
-    updatedAt: snap.ts || null,
+    updatedAt: updatedAt || null,
     sessions: codexSessionBreakdown(),
   };
+}
+
+function readCodexUsage() {
+  const snap = latestCodexRateLimits();
+  return snap ? codexUsageFromRateLimits(snap.rl, snap.ts) : null;
+}
+
+async function fetchCodexUsage() {
+  const fallback = () => readCodexUsage();
+  let auth;
+  try { auth = JSON.parse(fs.readFileSync(CODEX_AUTH_PATH, 'utf8')); } catch { return fallback(); }
+  const token = auth && auth.tokens && auth.tokens.access_token;
+  const accountId = auth && auth.tokens && auth.tokens.account_id;
+  if (!token || !accountId || auth.auth_mode !== 'chatgpt') return fallback();
+  try {
+    const res = await fetch(CODEX_USAGE_URL, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'ChatGPT-Account-Id': accountId,
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return fallback();
+    const data = await res.json();
+    const rateLimit = data && data.rate_limit;
+    if (!rateLimit) return fallback();
+    const mapWindow = (w) => w && ({
+      used_percent: w.used_percent,
+      window_minutes: w.limit_window_seconds / 60,
+      resets_at: w.reset_at || (w.reset_after_seconds
+        ? Math.floor(Date.now() / 1000) + w.reset_after_seconds
+        : null),
+    });
+    return codexUsageFromRateLimits({
+      primary: mapWindow(rateLimit.primary_window),
+      secondary: mapWindow(rateLimit.secondary_window),
+      plan_type: data.plan_type || null,
+    }, Date.now());
+  } catch {
+    return fallback();
+  }
 }
 
 function codexGauges(codex) {
@@ -619,8 +659,7 @@ function codexGauges(codex) {
 }
 
 async function pollNow() {
-  const result = await fetchUsage();
-  const codex = readCodexUsage();
+  const [result, codex] = await Promise.all([fetchUsage(), fetchCodexUsage()]);
   const claudeLocal = readClaudeLocalUsage();
   if (result.ok) {
     lastUsage = result;

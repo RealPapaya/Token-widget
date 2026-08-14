@@ -37,7 +37,7 @@ function normalizeGaugeKey(key) {
 
 function isSpecialCategoryKey(key) {
   const normalized = normalizeGaugeKey(key);
-  return normalized === 'amber_ladder' || normalized === 'omelette_promotional';
+  return !ONE_TIME.has(normalized) && !/^(?:five_hour|seven_day)(?:_|$)/.test(normalized);
 }
 
 function labelForGauge(key) {

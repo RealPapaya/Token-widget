@@ -15,6 +15,21 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## powershell-inline-cjk-literals-can-mojibake (2026-08-14)
+- Trap: Even a .NET UTF-8 read/write fallback can corrupt newly inserted CJK when the PowerShell command itself carries raw non-ASCII literals through an incompatible command encoding.
+- Cost: A narrowly edited documentation line becomes mojibake while surrounding UTF-8 content remains intact.
+- Rule: In PowerShell fallback edits, construct new CJK text from Unicode code points or use apply_patch; verify inserted non-ASCII text with a UTF-8 read-back before continuing.
+
+## unknown-claude-gauges-default-to-special (2026-08-14)
+- Win: Recognizing ordinary Claude quotas by standard time-window naming while honoring the existing `ONE_TIME` set keeps known one-time credits visible and makes new campaign or unknown categories special automatically.
+- Benefit: Turning off `顯示特殊分類` hides campaign or unknown categories such as Nimbus Quill while keeping one-time credits visible across the widget, notifications, and tray summary.
+- Rule: Treat keys in `ONE_TIME` and standard time-window keys as ordinary; classify all remaining Claude gauge keys as special by default.
+
+## codex-live-usage-endpoint-beats-rollout-rounding (2026-07-22)
+- Win: The authenticated Codex `/wham/usage` endpoint reported the current 1-2% weekly usage while the newest rollout `rate_limits` snapshot still reported `used_percent: 0.0`.
+- Benefit: The widget can show current Codex quota consumption instead of a misleading 0%, while retaining offline behavior.
+- Rule: For ChatGPT-authenticated Codex usage, read the live `/wham/usage` response first and keep rollout snapshots only as the network/auth fallback.
+
 ## powershell-converttojson-escapes-package-scripts (2026-07-08)
 - Trap: PowerShell 5 ConvertTo-Json escapes npm script && operators as \u0026\u0026 and can heavily reformat package.json.
 - Cost: Platform packaging changes become noisy to review and the script text can be misread while debugging build commands.
