@@ -224,6 +224,7 @@ let manualRefreshSawUsage = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
+let lastServiceStatus = null; // Anthropic status page snapshot (only set when the API errored)
 
 // Build gauge rows for Codex (OpenAI) usage. Same shape as normalize()'s rows,
 // tagged brand:'codex' so they render with the OpenAI logo and a blue bar.
@@ -1256,6 +1257,15 @@ function renderGauges() {
   requestResize();
 }
 
+// Anthropic status page hint (only populated when the usage API errored).
+function serviceIncidentText() {
+  const s = lastServiceStatus;
+  if (!s || !s.indicator || s.indicator === 'none') return '';
+  const levels = { minor: '部分服務異常', major: '重大服務中斷', critical: '嚴重服務中斷' };
+  const level = levels[s.indicator] || '服務狀態異常';
+  return s.description ? `Anthropic ${level}：${s.description}` : `Anthropic ${level}`;
+}
+
 function renderStatus() {
   const dot = $('status-dot');
   const text = $('status-text');
@@ -1283,7 +1293,11 @@ function renderStatus() {
       network: '網路連線失敗，將於下次排程重試',
       'http-429': 'Anthropic 暫時限流，稍後自動重試（Codex 不受影響）',
     };
-    text.textContent = msgs[lastError] || `更新失敗（${lastError}）`;
+    let msg = msgs[lastError] || `更新失敗（${lastError}）`;
+    const incident = serviceIncidentText();
+    if (incident) msg = `${msg}｜${incident}`;
+    text.textContent = msg;
+    setTooltip(text, incident ? `${incident}（詳見 status.claude.com）` : '');
   } else if (!usageLoaded) {
     statusColor = 'loading';
     dot.classList.remove('err');
@@ -1302,6 +1316,7 @@ function renderStatus() {
       statusColor = 'green';
       dot.classList.remove('err', 'loading');
       text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+      setTooltip(text, '');
     }
   }
 
@@ -1530,6 +1545,7 @@ window.widget.onUsage((payload) => {
   usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
+  if ('serviceStatus' in payload) lastServiceStatus = payload.serviceStatus;
   if (payload.ok) {
     lastError = null;
     lastFetchedAt = payload.fetchedAt;
