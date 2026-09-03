@@ -157,7 +157,10 @@ function collectRolloutFiles(dir, out) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectRolloutFiles(p, out);
     else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
-      try { out.push({ p, mtime: fs.statSync(p).mtimeMs }); } catch {}
+      try {
+        const st = fs.statSync(p);
+        out.push({ p, mtime: st.mtimeMs, size: st.size });
+      } catch {}
     }
   }
 }
@@ -187,6 +190,59 @@ function headRead(file, maxBytes) {
 
 function num(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+// ---------- session scan cache ----------
+// Session transcripts are append-only: once a session ends its file never
+// changes again. Re-parsing every file on every poll blocked the main process
+// for ~900ms here (226 Codex rollouts / 376 MB + 32 Claude transcripts / 22 MB),
+// and because this build runs without GPU compositing (see LESSONS.md
+// "disable-gpu-for-transparent-widget") a blocked main process visibly freezes
+// the widget's animations. Key each parse by mtime+size and re-read only what
+// actually changed, so steady-state polls cost almost nothing.
+// One cache per source: the prune step below evicts anything absent from the
+// scan it just ran, so Claude and Codex must not share a Map.
+const claudeScanCache = new Map(); // absolute path -> { mtime, size, item }
+const codexScanCache = new Map();
+// Files are parsed in small batches; between batches we hand control back to
+// the event loop so window messages and IPC keep flowing during a scan.
+const SCAN_BATCH_SIZE = 8;
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Walk `files` (newest first), parsing at most `limit` usable sessions while
+// reusing cached results and yielding between batches.
+async function scanSessions(cache, files, limit, parse) {
+  const sessions = [];
+  const seen = new Set();
+  let sinceYield = 0;
+  let walkedAll = true;
+  for (const f of files) {
+    seen.add(f.p);
+    const hit = cache.get(f.p);
+    let item;
+    if (hit && hit.mtime === f.mtime && hit.size === f.size) {
+      item = hit.item;
+    } else {
+      item = parse(f.p, f.mtime);
+      cache.set(f.p, { mtime: f.mtime, size: f.size, item });
+      if (++sinceYield >= SCAN_BATCH_SIZE) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+      }
+    }
+    if (item) sessions.push(item);
+    if (sessions.length >= limit) { walkedAll = false; break; }
+  }
+  // Drop entries for files that no longer exist so the cache can't grow without
+  // bound. Only safe when the whole list was walked: an early `limit` break
+  // leaves later files unvisited, and evicting them would defeat the cache.
+  if (walkedAll) {
+    for (const key of cache.keys()) if (!seen.has(key)) cache.delete(key);
+  }
+  return sessions;
 }
 
 function usageFromTokenInfo(info) {
@@ -326,16 +382,11 @@ function readRolloutSessionUsage(file, mtime) {
   };
 }
 
-function codexSessionBreakdown(limit = CODEX_SESSION_BREAKDOWN_LIMIT) {
+async function codexSessionBreakdown(limit = CODEX_SESSION_BREAKDOWN_LIMIT) {
   const files = [];
   collectRolloutFiles(CODEX_SESSIONS_DIR, files);
   files.sort((a, b) => b.mtime - a.mtime);
-  const sessions = [];
-  for (const f of files) {
-    const item = readRolloutSessionUsage(f.p, f.mtime);
-    if (item) sessions.push(item);
-    if (sessions.length >= limit) break;
-  }
+  const sessions = await scanSessions(codexScanCache, files, limit, readRolloutSessionUsage);
   sessions.sort((a, b) => b.totalTokens - a.totalTokens);
   const totalTokens = sessions.reduce((sum, s) => sum + s.totalTokens, 0);
   return {
@@ -355,7 +406,10 @@ function collectClaudeTranscriptFiles(dir, out) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectClaudeTranscriptFiles(p, out);
     else if (e.isFile() && e.name.endsWith('.jsonl')) {
-      try { out.push({ p, mtime: fs.statSync(p).mtimeMs }); } catch {}
+      try {
+        const st = fs.statSync(p);
+        out.push({ p, mtime: st.mtimeMs, size: st.size });
+      } catch {}
     }
   }
 }
@@ -438,16 +492,11 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
   };
 }
 
-function claudeSessionBreakdown(limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
+async function claudeSessionBreakdown(limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
   const files = [];
   collectClaudeTranscriptFiles(CLAUDE_PROJECTS_DIR, files);
   files.sort((a, b) => b.mtime - a.mtime);
-  const sessions = [];
-  for (const f of files) {
-    const item = readClaudeTranscriptSessionUsage(f.p, f.mtime);
-    if (item) sessions.push(item);
-    if (sessions.length >= limit) break;
-  }
+  const sessions = await scanSessions(claudeScanCache, files, limit, readClaudeTranscriptSessionUsage);
   sessions.sort((a, b) => b.totalTokens - a.totalTokens);
   const totalTokens = sessions.reduce((sum, s) => sum + s.totalTokens, 0);
   return {
@@ -529,8 +578,8 @@ function fmtCompactTokens(n) {
   return String(n);
 }
 
-function readClaudeLocalUsage() {
-  const sessions = claudeSessionBreakdown();
+async function readClaudeLocalUsage() {
+  const sessions = await claudeSessionBreakdown();
   return {
     sessions,
     habits: readClaudeStatsHabits(),
@@ -600,12 +649,14 @@ function codexUsageFromRateLimits(rl, updatedAt) {
     else if (!week) week = g;                          // weekly (or unknown long window)
   }
   if (!five && !week) return null;
+  // Session breakdown is deliberately not computed here: it is a heavy disk
+  // scan, it is unrelated to rate-limit mapping, and the live-endpoint path
+  // used to pay for it too. `pollNow` attaches it separately.
   return {
     fiveHour: five,
     sevenDay: week,
     planType: rl.plan_type || null,
     updatedAt: updatedAt || null,
-    sessions: codexSessionBreakdown(),
   };
 }
 
@@ -658,9 +709,20 @@ function codexGauges(codex) {
   return out;
 }
 
-async function pollNow() {
+// Overlapping polls (tray "立即更新" mashed, or a manual refresh landing on top
+// of the timer) would run duplicate disk scans and race their `usage` sends.
+// Collapse concurrent callers onto the in-flight run.
+let pollInFlight = null;
+function pollNow() {
+  if (pollInFlight) return pollInFlight;
+  pollInFlight = runPoll().finally(() => { pollInFlight = null; });
+  return pollInFlight;
+}
+
+async function runPoll() {
   const [result, codex] = await Promise.all([fetchUsage(), fetchCodexUsage()]);
-  const claudeLocal = readClaudeLocalUsage();
+  const claudeLocal = await readClaudeLocalUsage();
+  if (codex) codex.sessions = await codexSessionBreakdown();
   if (result.ok) {
     lastUsage = result;
     saveUsageCache(result);
@@ -673,15 +735,34 @@ async function pollNow() {
   updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex);
 }
 
+// Manual refresh, shared by the header button and the tray item. The spinner
+// state is pushed before any work starts and cleared in `finally`, so the tray
+// path animates the same way the in-app button does.
+async function requestRefresh() {
+  const notify = (active) => {
+    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active });
+  };
+  notify(true);
+  try {
+    await yieldToEventLoop(); // flush the spinner IPC before the poll's first chunk of work
+    await pollNow();
+  } finally {
+    notify(false);
+  }
+}
+
 function startPolling() {
   clearInterval(pollTimer);
   pollTimer = setInterval(pollNow, Math.max(1, settings.pollMinutes) * 60 * 1000);
   pollNow();
 }
+// Paints the window from cache the moment the renderer loads, so it must stay
+// cheap: no session breakdowns here. `claudeLocal` is omitted rather than left
+// empty (the renderer only overwrites it when the key is present), and the
+// `pollNow()` that runs right after this fills both in.
 function cachedUsagePayload() {
   if (!lastUsage || !lastUsage.data) return null;
   const payload = { ...lastUsage, cached: true };
-  payload.claudeLocal = readClaudeLocalUsage();
   payload.codex = readCodexUsage();
   return payload;
 }
@@ -1034,7 +1115,7 @@ function rebuildTrayMenu() {
       click: () => setCollapsed(!settings.collapsed),
     },
     { label: '顯示 / 隱藏', click: () => toggleWindowVisibility() },
-    { label: '立即更新', click: () => pollNow() },
+    { label: '立即更新', click: () => requestRefresh() },
     { type: 'separator' },
     {
       label: '永遠置頂',
@@ -1249,14 +1330,7 @@ ipcMain.on('resize-height', (_e, { height }) => {
   applyWidgetBounds({ width: modeWidth(), height });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
-ipcMain.on('refresh', async () => {
-  if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: true });
-  try {
-    await pollNow();
-  } finally {
-    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: false });
-  }
-});
+ipcMain.on('refresh', () => { requestRefresh(); });
 ipcMain.on('open-menu', () => {
   const menu = rebuildTrayMenu();
   if (menu) menu.popup({ window: win });

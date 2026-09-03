@@ -15,6 +15,16 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## sync-session-scans-freeze-the-widget-animations (2026-09-03)
+- Trap: `pollNow()` re-parsed every Claude transcript and Codex rollout synchronously on every poll and every 立即更新. Measured 921ms of blocking main-process I/O here (226 rollouts / 376 MB + 32 transcripts / 22 MB). Because this widget runs with GPU compositing off (see `disable-gpu-for-transparent-widget`), nothing can fall back to a compositor thread, so a blocked process freezes the refresh spinner outright.
+- Cost: The 立即更新 spin animation visibly stuttered for about a second on every refresh, and the cost grew with the user's session history.
+- Rule: Session transcripts are append-only — cache each parse by `mtime`+`size` (one Map per source, since the prune step evicts anything absent from the scan that just ran) and `await` a yield every few files so window messages keep flowing. Never call a session breakdown from a rate-limit mapper or from `cachedUsagePayload()`; attach it in `pollNow()` instead.
+
+## gpu-off-means-animation-cost-lands-on-the-main-thread (2026-09-03)
+- Trap: With `disable-gpu-compositing`, CSS animations cannot be promoted to a compositor thread, so any renderer main-thread stall shows up as dropped animation frames. A forced reflow per gauge bar plus one `requestAnimationFrame` loop per percentage counter is enough to be visible.
+- Cost: Bar and counter animations competed with the concurrently spinning refresh icon on every render.
+- Rule: In this renderer, batch DOM write/read cycles — stage all "from" values, then do a single forced reflow and one shared rAF loop per render. Add `will-change` to elements with infinite animations so they get their own layer instead of repainting their parent.
+
 ## powershell-inline-cjk-literals-can-mojibake (2026-08-14)
 - Trap: Even a .NET UTF-8 read/write fallback can corrupt newly inserted CJK when the PowerShell command itself carries raw non-ASCII literals through an incompatible command encoding.
 - Cost: A narrowly edited documentation line becomes mojibake while surrounding UTF-8 content remains intact.

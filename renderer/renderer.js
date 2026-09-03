@@ -291,6 +291,15 @@ function gaugeMotionKey(g) {
   return `${g.brand}:${g.key}`;
 }
 
+// This build runs without GPU compositing (see LESSONS.md
+// "disable-gpu-for-transparent-widget"), so every animated frame is rasterized
+// on the CPU by the renderer's main thread. Anything that stalls that thread —
+// a forced reflow per bar, one rAF loop per number — shows up as visible
+// stutter in the concurrently spinning refresh icon. Both helpers below
+// therefore batch: one forced reflow per render, one rAF loop for all counters.
+const pendingWidths = [];
+let widthFrame = null;
+
 function animateWidth(el, fromPct, toPct) {
   if (!el) return;
   const to = pctWidth(toPct);
@@ -300,11 +309,34 @@ function animateWidth(el, fromPct, toPct) {
   }
   el.style.transition = 'none';
   el.style.width = pctWidth(fromPct);
-  void el.offsetWidth;
-  el.style.transition = '';
-  requestAnimationFrame(() => {
-    el.style.width = to;
+  pendingWidths.push({ el, to });
+  if (widthFrame != null) return;
+  widthFrame = requestAnimationFrame(() => {
+    widthFrame = null;
+    const batch = pendingWidths.splice(0);
+    // Single forced layout commits every staged "from" width while transitions
+    // are still off; restoring them below then animates from → to.
+    void document.body.offsetWidth;
+    for (const item of batch) {
+      item.el.style.transition = '';
+      item.el.style.width = item.to;
+    }
   });
+}
+
+const PCT_ANIM_MS = 700;
+const pctAnimations = new Map(); // element -> { from, to, decimals, startedAt }
+let pctFrame = null;
+
+function pumpPctAnimations(now) {
+  pctFrame = null;
+  for (const [el, a] of pctAnimations) {
+    const progress = Math.min(1, (now - a.startedAt) / PCT_ANIM_MS);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = pctText(a.from + ((a.to - a.from) * eased), a.decimals);
+    if (progress >= 1) pctAnimations.delete(el);
+  }
+  if (pctAnimations.size) pctFrame = requestAnimationFrame(pumpPctAnimations);
 }
 
 function animatePctText(el, fromPct, toPct, decimals) {
@@ -312,19 +344,13 @@ function animatePctText(el, fromPct, toPct, decimals) {
   const from = clampPct(fromPct);
   const to = clampPct(toPct);
   if (prefersReducedMotion() || Math.abs(to - from) < 0.05) {
+    pctAnimations.delete(el);
     el.textContent = pctText(to, decimals);
     return;
   }
-  const duration = 700;
-  const startedAt = performance.now();
-  const tick = (now) => {
-    const progress = Math.min(1, (now - startedAt) / duration);
-    const eased = 1 - Math.pow(1 - progress, 3);
-    el.textContent = pctText(from + ((to - from) * eased), decimals);
-    if (progress < 1) requestAnimationFrame(tick);
-  };
   el.textContent = pctText(from, decimals);
-  requestAnimationFrame(tick);
+  pctAnimations.set(el, { from, to, decimals, startedAt: performance.now() });
+  if (pctFrame == null) pctFrame = requestAnimationFrame(pumpPctAnimations);
 }
 
 function animateInlineBars(root, selector) {
