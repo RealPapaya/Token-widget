@@ -29,6 +29,17 @@ const LABELS = {
 // keys where resets_at means "expires" (one-time credits), not a rolling reset
 const ONE_TIME = new Set(['cinder_cove']);
 
+// A rolling 7-day window never resets more than 7 days out. When it does, the
+// account is on a monthly cycle (free plans), so "本週" would read wrong.
+// Half a day of slack keeps clock skew from flipping a fresh weekly window.
+const WEEKLY_MAX_MS = 7.5 * 24 * 60 * 60 * 1000;
+
+function periodLabel(label, resetsAt) {
+  if (!resetsAt || !label.includes('本週')) return label;
+  const ms = new Date(resetsAt) - Date.now();
+  return ms > WEEKLY_MAX_MS ? label.replace('本週', '本月') : label;
+}
+
 function prettifyKey(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
@@ -114,7 +125,7 @@ function normalize(data) {
     if (val.limit_dollars == null && !val.resets_at && val.utilization <= 0) continue;
     gauges.push({
       key,
-      label: LABELS[key] || prettifyKey(key),
+      label: periodLabel(LABELS[key] || prettifyKey(key), val.resets_at),
       pct: Math.min(100, val.utilization),
       resetsAt: val.resets_at || null,
       oneTime: ONE_TIME.has(key),
@@ -172,7 +183,8 @@ function codexGauges(codex) {
   const add = (d, label, key) => {
     if (!d || typeof d.pct !== 'number') return;
     out.push({
-      key, label,
+      key,
+      label: periodLabel(label, d.resetsAt),
       pct: Math.min(100, d.pct),
       resetsAt: d.resetsAt || null,
       oneTime: false,
