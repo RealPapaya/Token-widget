@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: claude-usage-widget-windows
-          path: "Claude Usage Widget.exe"
+          path: "usage widget.exe"
           if-no-files-found: error
 
       - name: Move latest tag
@@ -54,14 +54,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest Windows Build
-          files: "Claude Usage Widget.exe"
+          name: Archive
+          files: "usage widget.exe"
           overwrite_files: true
           make_latest: true
           body: |
-            Automatic Windows portable build from the latest main/master commit.
+            Automatic Windows portable build archive from the latest main/master commit.
 
-            Download `Claude Usage Widget.exe` from Assets and run it directly on Windows.
+            Download `usage widget.exe` from Assets and run it directly on Windows.
 
             Windows SmartScreen may warn on first launch because this build is not code-signed yet. Use "More info" -> "Run anyway" only if you downloaded the file from this Release.
 
@@ -69,11 +69,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: "Claude Usage Widget.exe"
+          files: "usage widget.exe"
           generate_release_notes: true
           body: |
             Windows portable build for Claude Usage Widget.
 
-            Download `Claude Usage Widget.exe` from Assets and run it directly on Windows.
+            Download `usage widget.exe` from Assets and run it directly on Windows.
 
             Windows SmartScreen may warn on first launch because this build is not code-signed yet. Use "More info" -> "Run anyway" only if you downloaded the file from this Release.

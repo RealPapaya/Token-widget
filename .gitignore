@@ -3,3 +3,4 @@ dist/
 /Claude Usage Widget.exe
 *.log
 .gemini/
+/usage widget.exe

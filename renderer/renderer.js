@@ -24,10 +24,26 @@ const LABELS = {
   seven_day_cowork: '本週 · Cowork',
   cinder_cove: 'Claude Code / Cowork 額度',
   amber_ladder: 'Amber Ladder 額度',
+  omelette_promotional: 'Omelette Promotional 額度',
   extra_usage: '加購用量額度',
 };
 // keys where resets_at means "expires" (one-time credits), not a rolling reset
 const ONE_TIME = new Set(['cinder_cove']);
+const RESET_FIELDS = ['resets_at', 'reset_at', 'resetsAt', 'resetAt', 'expires_at', 'expiresAt'];
+
+function normalizeGaugeKey(key) {
+  return String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+}
+
+function isSpecialCategoryKey(key) {
+  const normalized = normalizeGaugeKey(key);
+  return !ONE_TIME.has(normalized) && !/^(?:five_hour|seven_day)(?:_|$)/.test(normalized);
+}
+
+function labelForGauge(key) {
+  const normalized = normalizeGaugeKey(key);
+  return LABELS[key] || LABELS[normalized] || prettifyKey(key);
+}
 
 // A rolling 7-day window never resets more than 7 days out. When it does, the
 // account is on a monthly cycle (free plans), so "本週" would read wrong.
@@ -102,6 +118,46 @@ function severityOf(pct) {
   return 'normal';
 }
 
+function normalizeResetTime(value) {
+  if (!value) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 100000000000 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
+  if (typeof value !== 'string') return null;
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+
+function resetTimeFromObject(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const field of RESET_FIELDS) {
+    const reset = normalizeResetTime(obj[field]);
+    if (reset) return reset;
+  }
+  return null;
+}
+
+function resetGroupForKey(key) {
+  if (key === 'five_hour') return 'five_hour';
+  if (key && key.startsWith('seven_day')) return 'seven_day';
+  return null;
+}
+
+function resetTimeForGauge(data, key, val) {
+  const direct = resetTimeFromObject(val);
+  if (direct) return direct;
+
+  const group = resetGroupForKey(key);
+  if (group && group !== key) {
+    const shared = resetTimeFromObject(data[group]);
+    if (shared) return shared;
+  }
+
+  const limits = data && data.limits;
+  if (!limits || typeof limits !== 'object') return null;
+  return resetTimeFromObject(limits[key]) || (group ? resetTimeFromObject(limits[group]) : null);
+}
 function fillClassForGauge(g) {
   const sev = severityOf(g.pct);
   if (sev !== 'normal') return sev;
@@ -116,18 +172,17 @@ function pctClassForGauge(g) {
 // ---------- normalize API payload into gauge list ----------
 function normalize(data) {
   const skip = new Set(['limits', 'spend', 'extra_usage', 'member_dashboard_available']);
-  if (!showAmberLadder) skip.add('amber_ladder');
   const gauges = [];
-  const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+  const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'amber_ladder', 'omelette_promotional'];
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
+    if (!showAmberLadder && isSpecialCategoryKey(key)) continue;
     if (typeof val.utilization !== 'number') continue;
-    if (val.limit_dollars == null && !val.resets_at && val.utilization <= 0) continue;
     gauges.push({
       key,
-      label: periodLabel(LABELS[key] || prettifyKey(key), val.resets_at),
+      label: periodLabel(labelForGauge(key), val.resets_at),
       pct: Math.min(100, val.utilization),
-      resetsAt: val.resets_at || null,
+      resetsAt: resetTimeForGauge(data, key, val),
       oneTime: ONE_TIME.has(key),
       brand: 'claude',
       dollars: val.limit_dollars != null
@@ -136,7 +191,7 @@ function normalize(data) {
     });
   }
   gauges.sort((a, b) => {
-    const ia = order.indexOf(a.key), ib = order.indexOf(b.key);
+    const ia = order.indexOf(normalizeGaugeKey(a.key)), ib = order.indexOf(normalizeGaugeKey(b.key));
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
   const eu = data.extra_usage;
@@ -171,6 +226,12 @@ let usageViewOpen = false;
 let usageAnalysisSheet = 'sessions';
 let usagePeriodKey = 'week';
 let usageSessionMode = 'project';
+let usageInsightMode = 'tokens';
+let usageLoaded = false;
+let usingCachedUsage = false;
+let manualRefreshActive = false;
+let manualRefreshPendingGreen = false;
+let manualRefreshSawUsage = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
@@ -204,6 +265,100 @@ function displayGauges() {
 }
 
 const $ = (id) => document.getElementById(id);
+
+let previousGaugeWidths = new Map();
+let previousCapsuleWidths = new Map();
+let activeMainView = 'gauges';
+const motionTimers = new WeakMap();
+
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function clampPct(pct) {
+  return Math.max(0, Math.min(100, Number(pct) || 0));
+}
+
+function pctWidth(pct) {
+  return `${clampPct(pct)}%`;
+}
+
+function pctText(pct, decimals) {
+  return `${clampPct(pct).toFixed(decimals)}%`;
+}
+
+function gaugeMotionKey(g) {
+  return `${g.brand}:${g.key}`;
+}
+
+function animateWidth(el, fromPct, toPct) {
+  if (!el) return;
+  const to = pctWidth(toPct);
+  if (prefersReducedMotion()) {
+    el.style.width = to;
+    return;
+  }
+  el.style.transition = 'none';
+  el.style.width = pctWidth(fromPct);
+  void el.offsetWidth;
+  el.style.transition = '';
+  requestAnimationFrame(() => {
+    el.style.width = to;
+  });
+}
+
+function animatePctText(el, fromPct, toPct, decimals) {
+  if (!el) return;
+  const from = clampPct(fromPct);
+  const to = clampPct(toPct);
+  if (prefersReducedMotion() || Math.abs(to - from) < 0.05) {
+    el.textContent = pctText(to, decimals);
+    return;
+  }
+  const duration = 700;
+  const startedAt = performance.now();
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = pctText(from + ((to - from) * eased), decimals);
+    if (progress < 1) requestAnimationFrame(tick);
+  };
+  el.textContent = pctText(from, decimals);
+  requestAnimationFrame(tick);
+}
+
+function animateInlineBars(root, selector) {
+  if (!root || prefersReducedMotion()) return;
+  const bars = [...root.querySelectorAll(selector)].map((bar) => {
+    const target = bar.style.width || '0%';
+    bar.style.transition = 'none';
+    bar.style.width = '0%';
+    return { bar, target };
+  });
+  void root.offsetWidth;
+  requestAnimationFrame(() => {
+    bars.forEach(({ bar, target }) => {
+      bar.style.transition = '';
+      bar.style.width = target;
+    });
+  });
+}
+
+function animateEnter(el, className = 'view-enter') {
+  if (!el || prefersReducedMotion()) return;
+  const oldTimer = motionTimers.get(el);
+  if (oldTimer) clearTimeout(oldTimer);
+  el.classList.remove(className, `${className}-active`);
+  void el.offsetWidth;
+  el.classList.add(className);
+  requestAnimationFrame(() => {
+    el.classList.add(`${className}-active`);
+  });
+  motionTimers.set(el, setTimeout(() => {
+    el.classList.remove(className, `${className}-active`);
+    motionTimers.delete(el);
+  }, 380));
+}
 
 let tooltipEl = null;
 let tooltipTarget = null;
@@ -356,7 +511,7 @@ function fmtCost(n) {
 }
 
 const USAGE_PERIODS = [
-  { key: 'day', label: '1日', days: 1, icon: 'M12 7v5l3 2' },
+  { key: 'day', label: '1日', days: 1, icon: 'M8 2v3M16 2v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM12 12v6M10.5 13.5 12 12l1.5 1.5' },
   { key: 'week', label: '1週', days: 7, icon: 'M8 2v3M16 2v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
   { key: 'month', label: '1月', days: 30, icon: 'M4 6h16M7 3v6M17 3v6M7 13h3M14 13h3M7 17h3M14 17h3M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' },
   { key: 'all', label: '全部', days: null, icon: 'M4 6h16M4 12h16M4 18h16' },
@@ -393,6 +548,13 @@ function filterSessionsByPeriod(sessions) {
 
 function sessionTotal(sessions, key) {
   return sessions.reduce((sum, s) => sum + (Number(s[key]) || 0), 0);
+}
+
+function cacheInputDenominator(input, cached, cacheWrite, total) {
+  const cacheTokens = Number(cached) || 0;
+  const inputTokens = (Number(input) || 0) + cacheTokens + (Number(cacheWrite) || 0);
+  if (inputTokens >= cacheTokens) return inputTokens;
+  return Math.max(cacheTokens, Number(total) || 0);
 }
 
 function rateForClaudeSession(session) {
@@ -466,8 +628,8 @@ function appendUsageTabs(box) {
   const tabs = document.createElement('div');
   tabs.className = 'usage-tabs';
   const items = [
-    ['sessions', '工作階段比例'],
-    ['habits', '使用習慣'],
+    ['sessions', '用量分布'],
+    ['habits', '使用分析'],
   ];
   for (const [sheet, label] of items) {
     const btn = document.createElement('button');
@@ -530,6 +692,30 @@ function appendSessionModeControls(box) {
   box.appendChild(controls);
 }
 
+function appendInsightModeControls(box) {
+  const controls = document.createElement('div');
+  controls.className = 'usage-session-modes';
+  const items = [
+    ['tokens', 'Token 組成'],
+    ['patterns', '使用習慣'],
+  ];
+  for (const [mode, label] of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = mode === usageInsightMode ? 'active' : '';
+    btn.textContent = label;
+    setTooltip(btn, mode === 'tokens' ? '輸入、快取、輸出與推理 Token 拆帳' : '模型、時間、上下文、成本與子代理模式');
+    btn.addEventListener('click', () => {
+      if (usageInsightMode === mode) return;
+      usageInsightMode = mode;
+      hideTooltip();
+      renderUsageView();
+      requestResize();
+    });
+    controls.appendChild(btn);
+  }
+  box.appendChild(controls);
+}
 function basenameFromPath(value) {
   const parts = String(value || '').split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] || '';
@@ -682,6 +868,16 @@ function pctFromTokenSum(sessions, predicate, total) {
   return total > 0 ? (used / total) * 100 : null;
 }
 
+function modelDisplayName(model) {
+  return String(model || '').replace(/^claude-/, '').replace(/-/g, ' ');
+}
+
+function sessionHour(session) {
+  const t = Date.parse(session && (session.startedAt || session.updatedAt));
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).getHours();
+}
+
 function collectCodexHabits(codex) {
   const data = codex && codex.sessions;
   const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
@@ -689,6 +885,8 @@ function collectCodexHabits(codex) {
   const total = Number(data.totalTokens) || sessions.reduce((sum, s) => sum + (Number(s.totalTokens) || 0), 0);
   const input = sessions.reduce((sum, s) => sum + (Number(s.inputTokens) || 0), 0);
   const cached = sessions.reduce((sum, s) => sum + (Number(s.cachedInputTokens) || 0), 0);
+  const cacheWrite = sessions.reduce((sum, s) => sum + (Number(s.cacheCreationInputTokens) || 0), 0);
+  const totalInput = cacheInputDenominator(input, cached, cacheWrite, total);
   const output = sessions.reduce((sum, s) => sum + (Number(s.outputTokens) || 0), 0);
   const reasoning = sessions.reduce((sum, s) => sum + (Number(s.reasoningOutputTokens) || 0), 0);
   const workflowHits = sessions.reduce((sum, s) => sum + (Number(s.workflowSubagentHits) || 0), 0);
@@ -704,9 +902,9 @@ function collectCodexHabits(codex) {
     {
       brand: 'codex',
       label: '快取輸入 Token',
-      pct: input > 0 ? (cached / input) * 100 : null,
+      pct: totalInput > 0 ? (cached / totalInput) * 100 : null,
       kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
+      detail: `${fmtTokens(cached)} / ${fmtTokens(totalInput)} 輸入 Token`,
     },
     {
       brand: 'codex',
@@ -733,7 +931,7 @@ function collectCodexHabits(codex) {
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
-function collectSessionHabits(sessions, brand) {
+function collectTokenCompositionHabits(sessions, brand) {
   sessions = Array.isArray(sessions) ? sessions : [];
   if (!sessions.length) return [];
   const total = sessionTotal(sessions, 'totalTokens');
@@ -742,45 +940,94 @@ function collectSessionHabits(sessions, brand) {
   const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
   const output = sessionTotal(sessions, 'outputTokens');
   const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
-  const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');
-  const subagentHits = sessionTotal(sessions, 'subagentHits');
-  const expensive = sessions.filter((s) => estimateSessionCost(s, brand) >= 1);
+  const tokenTotal = Math.max(total, input + cached + cacheWrite + output + reasoning);
   const habits = [
     {
       brand,
-      label: '超過 150K Token / 上下文的工作階段',
-      pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
-      kind: '大型上下文',
-      detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
+      label: '一般輸入 Token',
+      pct: tokenTotal > 0 ? (input / tokenTotal) * 100 : null,
+      kind: '輸入',
+      detail: `${fmtTokens(input)} / ${fmtTokens(tokenTotal)} Token`,
     },
     {
       brand,
-      label: '快取輸入 Token',
-      pct: input > 0 ? (cached / input) * 100 : null,
+      label: '快取讀取 Token',
+      pct: tokenTotal > 0 ? (cached / tokenTotal) * 100 : null,
       kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(input)} 輸入 Token`,
-    },
-    {
-      brand,
-      label: '輸出 Token 佔比',
-      pct: total > 0 ? (output / total) * 100 : null,
-      kind: '輸出',
-      detail: `${fmtTokens(output)} / ${fmtTokens(total)} Token`,
+      detail: `${fmtTokens(cached)} / ${fmtTokens(tokenTotal)} Token`,
     },
   ];
   if (cacheWrite > 0) habits.push({
     brand,
     label: '快取建立 Token',
-    pct: total > 0 ? (cacheWrite / total) * 100 : null,
+    pct: tokenTotal > 0 ? (cacheWrite / tokenTotal) * 100 : null,
     kind: '快取',
-    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(total)} Token`,
+    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(tokenTotal)} Token`,
+  });
+  if (output > 0) habits.push({
+    brand,
+    label: '輸出 Token',
+    pct: tokenTotal > 0 ? (output / tokenTotal) * 100 : null,
+    kind: '輸出',
+    detail: `${fmtTokens(output)} / ${fmtTokens(tokenTotal)} Token`,
   });
   if (reasoning > 0) habits.push({
     brand,
     label: '推理輸出 Token',
-    pct: output > 0 ? (reasoning / output) * 100 : null,
+    pct: tokenTotal > 0 ? (reasoning / tokenTotal) * 100 : null,
     kind: '推理',
-    detail: `${fmtTokens(reasoning)} / ${fmtTokens(output)} 輸出 Token`,
+    detail: `${fmtTokens(reasoning)} / ${fmtTokens(tokenTotal)} Token`,
+  });
+  return habits.filter((h) => h.pct == null || h.pct > 0);
+}
+
+function collectUsagePatternHabits(sessions, brand) {
+  sessions = Array.isArray(sessions) ? sessions : [];
+  if (!sessions.length) return [];
+  const total = sessionTotal(sessions, 'totalTokens');
+  const workflowHits = sessionTotal(sessions, 'workflowSubagentHits');
+  const subagentHits = sessionTotal(sessions, 'subagentHits');
+  const expensive = sessions.filter((s) => estimateSessionCost(s, brand) >= 1);
+  const modelRows = new Map();
+  for (const s of sessions) {
+    const model = String(s.model || '').trim();
+    if (!model) continue;
+    modelRows.set(model, (modelRows.get(model) || 0) + (Number(s.totalTokens) || 0));
+  }
+  const habits = [...modelRows.entries()]
+    .map(([model, tokens]) => ({
+      brand,
+      label: `${modelDisplayName(model)} 使用比例`,
+      pct: total > 0 ? (tokens / total) * 100 : null,
+      kind: '模型',
+      detail: fmtTokens(tokens),
+    }))
+    .sort((a, b) => (b.pct || 0) - (a.pct || 0))
+    .slice(0, 3);
+  const hourCounts = new Map();
+  for (const s of sessions) {
+    const hour = sessionHour(s);
+    if (hour == null) continue;
+    hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
+  }
+  const hourRows = [...hourCounts.entries()].sort((a, b) => b[1] - a[1]);
+  if (hourRows.length) {
+    const [hour, count] = hourRows[0];
+    const hourTotal = hourRows.reduce((sum, row) => sum + row[1], 0);
+    habits.push({
+      brand,
+      label: `${String(hour).padStart(2, '0')}:00 時段最常使用`,
+      pct: hourTotal > 0 ? (count / hourTotal) * 100 : null,
+      kind: '時間',
+      detail: `${count} / ${hourTotal} 個工作階段`,
+    });
+  }
+  habits.push({
+    brand,
+    label: '超過 150K Token / 上下文的工作階段',
+    pct: pctFromTokenSum(sessions, (s) => Number(s.totalTokens) >= 150000, total),
+    kind: '大型上下文',
+    detail: `${sessions.filter((s) => Number(s.totalTokens) >= 150000).length} / ${sessions.length} 個工作階段`,
   });
   if (expensive.length) habits.push({
     brand,
@@ -805,6 +1052,13 @@ function collectSessionHabits(sessions, brand) {
   });
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
+
+function collectSessionHabits(sessions, brand) {
+  return usageInsightMode === 'tokens'
+    ? collectTokenCompositionHabits(sessions, brand)
+    : collectUsagePatternHabits(sessions, brand);
+}
+
 function renderInsightRows(box, habits, brand, emptyText, sessions = []) {
   appendBrandHeader(box, brand, brand === 'claude' ? 'Claude' : 'Codex');
   if (sessions.length) renderCostSummary(box, sessions, sessionTotal(sessions, 'totalTokens'), brand);
@@ -829,6 +1083,7 @@ function renderInsightRows(box, habits, brand, emptyText, sessions = []) {
 }
 
 function renderHabitSections(box) {
+  appendInsightModeControls(box);
   const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
   const claudeSessions = filterSessionsByPeriod(claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : []);
   renderInsightRows(
@@ -919,20 +1174,46 @@ function renderUsageView() {
   if (usageAnalysisSheet === 'habits') renderHabitSections(box);
   else renderSessionSections(box);
   if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
+  animateInlineBars(box, '.session-bar > div, .insight-bar > div');
+}
+function setMainViewVisible(id, visible, shouldAnimate) {
+  const el = $(id);
+  if (!el) return;
+  const wasHidden = el.classList.contains('hidden');
+  el.classList.toggle('hidden', !visible);
+  if (visible && shouldAnimate && wasHidden) animateEnter(el);
 }
 function syncMainViewVisibility() {
-  $('gauges').classList.toggle('hidden', settingsOpen || usageViewOpen);
-  $('settings-view').classList.toggle('hidden', !settingsOpen);
-  $('usage-view').classList.toggle('hidden', !usageViewOpen);
+  const nextView = usageViewOpen ? 'usage-view' : (settingsOpen ? 'settings-view' : 'gauges');
+  const changed = nextView !== activeMainView;
+  setMainViewVisible('gauges', nextView === 'gauges', changed);
+  setMainViewVisible('settings-view', nextView === 'settings-view', changed);
+  setMainViewVisible('usage-view', nextView === 'usage-view', changed);
+  $('btn-settings').classList.toggle('active', settingsOpen);
   $('btn-usage-details').classList.toggle('active', usageViewOpen);
-  requestResize();
+  activeMainView = nextView;
+  requestResize({ force: changed });
+  if (changed) requestResize({ delay: 260, force: true });
 }
+function renderLoadingState(box) {
+  const row = document.createElement('div');
+  row.className = 'gauge loading-gauge';
+  row.innerHTML = '<div class="loading-state"><span class="spinner"></span><span>正在讀取用量限制</span></div>';
+  box.appendChild(row);
+}
+
 function renderGauges() {
   const box = $('gauges');
   const gauges = displayGauges();
+  const nextGaugeWidths = new Map();
   box.innerHTML = '';
   if (!gauges.length) {
-    box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
+    if (usageLoaded) {
+      box.innerHTML = '<div class="gauge"><span class="dim" style="font-size:12px">目前沒有可顯示的用量限制</span></div>';
+    } else {
+      renderLoadingState(box);
+    }
+    previousGaugeWidths = nextGaugeWidths;
   }
   let prevBrand = null;
   for (const g of gauges) {
@@ -965,18 +1246,23 @@ function renderGauges() {
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
     const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
-
+    const motionKey = gaugeMotionKey(g);
+    const previousPct = previousGaugeWidths.has(motionKey) ? previousGaugeWidths.get(motionKey) : 0;
     row.innerHTML =
       `<div class="gauge-top">` +
       `<span class="gauge-label">${logo}${g.label}</span>` +
-      `<span class="gauge-pct ${pctClass}">${g.pct.toFixed(1)}%</span>` +
+      `<span class="gauge-pct ${pctClass}">${pctText(previousPct, 1)}</span>` +
       `</div>` +
-      `<div class="bar"><div class="fill ${fillClass}" style="width:${g.pct}%"></div></div>` +
+      `<div class="bar"><div class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></div></div>` +
       ((subLeft || subRight)
         ? `<div class="gauge-sub"><span>${subLeft}</span><span>${subRight}</span></div>`
         : '');
     box.appendChild(row);
+    animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    animatePctText(row.querySelector('.gauge-pct'), previousPct, g.pct, 1);
+    nextGaugeWidths.set(motionKey, g.pct);
   }
+  previousGaugeWidths = nextGaugeWidths;
   renderStatus();
   renderCapsule(gauges);
   requestResize();
@@ -985,7 +1271,23 @@ function renderGauges() {
 function renderStatus() {
   const dot = $('status-dot');
   const text = $('status-text');
-  if (lastError) {
+  let statusColor = 'green';
+
+  if (manualRefreshActive) {
+    statusColor = 'loading';
+    dot.classList.remove('err');
+    dot.classList.add('loading');
+    if (lastFetchedAt) {
+      const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      });
+      text.textContent = `上次更新 ${t} · 正在更新...`;
+    } else {
+      text.textContent = '正在更新用量限制...';
+    }
+  } else if (lastError) {
+    statusColor = 'red';
+    dot.classList.remove('loading');
     dot.classList.add('err');
     const msgs = {
       'no-credentials': '找不到 Claude 憑證（~/.claude/.credentials.json）',
@@ -994,15 +1296,48 @@ function renderStatus() {
       'http-429': 'Anthropic 暫時限流，稍後自動重試（Codex 不受影響）',
     };
     text.textContent = msgs[lastError] || `更新失敗（${lastError}）`;
-  } else if (lastFetchedAt) {
+  } else if (!usageLoaded) {
+    statusColor = 'loading';
     dot.classList.remove('err');
+    dot.classList.add('loading');
+    text.textContent = '正在讀取用量限制...';
+  } else if (lastFetchedAt) {
     const t = new Date(lastFetchedAt).toLocaleTimeString('zh-TW', {
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
-    text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+    if (usingCachedUsage) {
+      statusColor = 'loading';
+      dot.classList.remove('err');
+      dot.classList.add('loading');
+      text.textContent = `上次更新 ${t} · 正在更新...`;
+    } else {
+      statusColor = 'green';
+      dot.classList.remove('err', 'loading');
+      text.textContent = `已更新 ${t} · 每 ${pollMinutes} 分鐘自動更新`;
+    }
   }
+
+  const statusIsGreen = !dot.classList.contains('err') && !dot.classList.contains('loading');
+  if (manualRefreshPendingGreen && manualRefreshSawUsage && statusIsGreen) manualRefreshPendingGreen = false;
+  syncRefreshButton(manualRefreshPendingGreen);
 }
 
+function syncRefreshButton(active) {
+  const btn = $('btn-refresh');
+  if (!btn) return;
+  btn.classList.toggle('is-refreshing', active);
+  btn.setAttribute('aria-busy', active ? 'true' : 'false');
+  setTooltip(btn, active ? '等待更新成功' : '立即更新');
+}
+
+function setManualRefreshActive(active) {
+  manualRefreshActive = active === true;
+  if (manualRefreshActive) {
+    manualRefreshPendingGreen = true;
+    manualRefreshSawUsage = false;
+  }
+  renderStatus();
+}
 function topGaugeByBrand(gauges) {
   const brands = ['claude', 'codex'];
   return brands.map((brand) => gauges
@@ -1017,27 +1352,36 @@ function renderCapsule(gauges) {
   if (!box) return;
   box.innerHTML = '';
   if (!gauges.length) {
-    box.innerHTML = '<div class="capsule-empty">--%</div>';
-    setTooltip($('capsule'), '目前沒有可顯示的用量限制');
+    box.innerHTML = usageLoaded
+      ? '<div class="capsule-empty">--%</div>'
+      : '<div class="capsule-loading"><span class="spinner spinner-small"></span><span>載入中</span></div>';
+    previousCapsuleWidths = new Map();
+    setTooltip($('capsule'), usageLoaded ? '目前沒有可顯示的用量限制' : '正在讀取用量限制');
     return;
   }
 
   const rows = topGaugeByBrand(gauges);
+  const nextCapsuleWidths = new Map();
   for (const g of rows) {
     const isCodex = g.brand === 'codex';
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
+    const previousPct = previousCapsuleWidths.has(g.brand) ? previousCapsuleWidths.get(g.brand) : 0;
     const row = document.createElement('div');
     row.className = `capsule-item brand-${g.brand}`;
     row.innerHTML =
       `<span class="capsule-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>` +
       `<span class="capsule-main">` +
       `<span class="capsule-name">${isCodex ? 'Codex' : 'Claude'}</span>` +
-      `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${g.pct}%"></span></span>` +
+      `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></span></span>` +
       `</span>` +
-      `<span class="capsule-pct ${pctClass}">${g.pct.toFixed(0)}%</span>`;
+      `<span class="capsule-pct ${pctClass}">${pctText(previousPct, 0)}</span>`;
     box.appendChild(row);
+    animateWidth(row.querySelector('.fill'), previousPct, g.pct);
+    animatePctText(row.querySelector('.capsule-pct'), previousPct, g.pct, 0);
+    nextCapsuleWidths.set(g.brand, g.pct);
   }
+  previousCapsuleWidths = nextCapsuleWidths;
 
   const summary = rows.map((g) => `${g.brand === 'codex' ? 'Codex' : 'Claude'} ${g.pct.toFixed(1)}%`).join(' / ');
   const soonest = gauges
@@ -1071,14 +1415,26 @@ function requestResize(options = {}) {
 
 function applyCollapsed(c) {
   collapsed = c;
-  $('panel').classList.toggle('hidden', c);
-  $('capsule').classList.toggle('hidden', !c);
-  requestResize();
+  const panel = $('panel');
+  const capsule = $('capsule');
+  const nextSurface = c ? capsule : panel;
+  const oldSurface = c ? panel : capsule;
+  if (oldSurface) oldSurface.classList.add('hidden');
+  if (nextSurface) {
+    const wasHidden = nextSurface.classList.contains('hidden');
+    nextSurface.classList.remove('hidden');
+    if (wasHidden) animateEnter(nextSurface, 'surface-enter');
+  }
+  requestResize({ force: true });
+  requestResize({ delay: 260, force: true });
 }
 
 // ---------- wiring ----------
 window.widget.onInit(({ collapsed: c }) => applyCollapsed(c));
 window.widget.onCollapsedChanged((c) => applyCollapsed(c));
+window.widget.onRefreshState((state) => {
+  setManualRefreshActive(state && state.active === true);
+});
 
 window.widget.onSettings((s) => {
   showClaude = s.showClaude !== false;
@@ -1182,6 +1538,8 @@ for (const [id, key] of Object.entries(TOGGLE_KEYS)) {
 }
 
 window.widget.onUsage((payload) => {
+  usageLoaded = true;
+  usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
   if (payload.ok) {
@@ -1190,6 +1548,7 @@ window.widget.onUsage((payload) => {
     lastData = payload.data;
     currentGauges = normalize(payload.data);
   } else {
+    usingCachedUsage = false;
     lastError = payload.error;
     if (payload.stale && payload.stale.data && !currentGauges.length) {
       lastData = payload.stale.data;
@@ -1197,13 +1556,17 @@ window.widget.onUsage((payload) => {
       lastFetchedAt = payload.stale.fetchedAt;
     }
   }
+  if (manualRefreshPendingGreen) manualRefreshSawUsage = true;
   renderGauges();
   if (usageViewOpen) renderUsageView();
 });
 
 $('btn-collapse').addEventListener('click', () => window.widget.toggleCollapse());
 $('btn-expand').addEventListener('click', () => window.widget.toggleCollapse());
-$('btn-refresh').addEventListener('click', () => window.widget.refresh());
+$('btn-refresh').addEventListener('click', () => {
+  setManualRefreshActive(true);
+  window.widget.refresh();
+});
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   window.widget.openMenu();

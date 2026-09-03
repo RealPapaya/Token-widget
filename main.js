@@ -6,16 +6,24 @@ const {
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const CLAUDE_STATS_PATH = path.join(os.homedir(), '.claude', 'stats-cache.json');
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
+const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
+const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const WIDTH_EXPANDED = 340;
 const WIDTH_COLLAPSED = 240;
 const CODEX_SESSION_BREAKDOWN_LIMIT = 240;
 const CLAUDE_SESSION_BREAKDOWN_LIMIT = 240;
+const APP_DISPLAY_NAME = 'usage widget';
+const LOGIN_ITEM_NAME = 'Claude Usage Widget';
+const LOGIN_ITEM_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const LEGACY_LOGIN_ITEM_NAMES = ['electron.app.Claude Usage Widget', 'electron.app.Electron'];
+const TRAY_GUID = '6f20d750-2f3f-4d4e-8a47-f3b40d4c6f27';
 
 let win = null;
 let tray = null;
@@ -28,9 +36,18 @@ let resizePersistenceTimer = null;
 let movePersistenceTimer = null;
 let preferredPos = null;
 const isSmokeTest = process.argv.includes('--screenshot');
+const isWindows = process.platform === 'win32';
+const isMac = process.platform === 'darwin';
+
+// Transparent frameless windows can render corrupted on some Windows GPU/driver combinations.
+if (isWindows) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
 
 // ---------- settings ----------
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+const usageCachePath = () => path.join(app.getPath('userData'), 'usage-cache.json');
 const DEFAULTS = {
   collapsed: false,
   alwaysOnTop: true,
@@ -44,6 +61,12 @@ const DEFAULTS = {
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
 };
+const ONE_TIME = new Set(['cinder_cove']);
+function isSpecialCategoryKey(key) {
+  const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
+  return !ONE_TIME.has(normalized) && !/^(?:five_hour|seven_day)(?:_|$)/.test(normalized);
+}
+
 let settings = { ...DEFAULTS };
 
 function loadSettings() {
@@ -58,6 +81,29 @@ function saveSettings() {
   saveTimer = setTimeout(() => {
     try { fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2)); } catch {}
   }, 300);
+}
+function loadUsageCache() {
+  try {
+    const cached = JSON.parse(fs.readFileSync(usageCachePath(), 'utf8'));
+    if (cached && cached.data && cached.fetchedAt) {
+      lastUsage = {
+        ok: true,
+        data: cached.data,
+        fetchedAt: cached.fetchedAt,
+        subscriptionType: cached.subscriptionType || null,
+      };
+    }
+  } catch {}
+}
+function saveUsageCache(result) {
+  if (!result || !result.ok || !result.data || !result.fetchedAt) return;
+  try {
+    fs.writeFileSync(usageCachePath(), JSON.stringify({
+      data: result.data,
+      fetchedAt: result.fetchedAt,
+      subscriptionType: result.subscriptionType || null,
+    }));
+  } catch {}
 }
 
 // ---------- usage fetching ----------
@@ -102,9 +148,8 @@ async function fetchUsage() {
 // ---------- Codex (OpenAI) usage ----------
 // Codex CLI (auth_mode: chatgpt) persists rate-limit snapshots inside its
 // session rollout files (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) as
-// `token_count` events. `primary` = 5h window (window_minutes 300),
-// `secondary` = weekly window (10080). We read the newest snapshot; this
-// mirrors what Codex's own /status shows and needs no network call.
+// `token_count` events. They provide an offline fallback when the live Codex
+// usage endpoint is unavailable.
 function collectRolloutFiles(dir, out) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -517,9 +562,7 @@ function latestCodexRateLimits() {
   return best;
 }
 
-function readCodexUsage() {
-  const snap = latestCodexRateLimits();
-  if (!snap) return null;
+function codexUsageFromRateLimits(rl, updatedAt) {
   const nowSec = Date.now() / 1000;
   // A snapshot is only rewritten when Codex is actually used, so after a window
   // rolls over the newest snapshot still shows the pre-reset percentage. If its
@@ -541,17 +584,70 @@ function readCodexUsage() {
     }
     return { pct, resetsAt: resetsSec ? new Date(resetsSec * 1000).toISOString() : null };
   };
-  const rl = snap.rl;
-  const five = mk(rl.primary);
-  const week = mk(rl.secondary);
+  // Codex reports windows in `primary`/`secondary`, but which is which is not
+  // fixed: as of 2026-07 Codex temporarily dropped the 5h window, leaving only
+  // the weekly window (window_minutes 10080) in `primary`. Classify by window
+  // length instead of slot position so a lone weekly window is never mislabeled
+  // as the 5-hour gauge. window_minutes ≈ 300 → 5h; ≈ 10080 → weekly.
+  let five = null;
+  let week = null;
+  for (const w of [rl.primary, rl.secondary]) {
+    if (!w || typeof w.used_percent !== 'number') continue;
+    const g = mk(w);
+    if (!g) continue;
+    const wm = w.window_minutes || 0;
+    if (wm > 0 && wm <= 1440) { if (!five) five = g; } // ≤ 1 day → short (5h) window
+    else if (!week) week = g;                          // weekly (or unknown long window)
+  }
   if (!five && !week) return null;
   return {
     fiveHour: five,
     sevenDay: week,
     planType: rl.plan_type || null,
-    updatedAt: snap.ts || null,
+    updatedAt: updatedAt || null,
     sessions: codexSessionBreakdown(),
   };
+}
+
+function readCodexUsage() {
+  const snap = latestCodexRateLimits();
+  return snap ? codexUsageFromRateLimits(snap.rl, snap.ts) : null;
+}
+
+async function fetchCodexUsage() {
+  const fallback = () => readCodexUsage();
+  let auth;
+  try { auth = JSON.parse(fs.readFileSync(CODEX_AUTH_PATH, 'utf8')); } catch { return fallback(); }
+  const token = auth && auth.tokens && auth.tokens.access_token;
+  const accountId = auth && auth.tokens && auth.tokens.account_id;
+  if (!token || !accountId || auth.auth_mode !== 'chatgpt') return fallback();
+  try {
+    const res = await fetch(CODEX_USAGE_URL, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'ChatGPT-Account-Id': accountId,
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return fallback();
+    const data = await res.json();
+    const rateLimit = data && data.rate_limit;
+    if (!rateLimit) return fallback();
+    const mapWindow = (w) => w && ({
+      used_percent: w.used_percent,
+      window_minutes: w.limit_window_seconds / 60,
+      resets_at: w.reset_at || (w.reset_after_seconds
+        ? Math.floor(Date.now() / 1000) + w.reset_after_seconds
+        : null),
+    });
+    return codexUsageFromRateLimits({
+      primary: mapWindow(rateLimit.primary_window),
+      secondary: mapWindow(rateLimit.secondary_window),
+      plan_type: data.plan_type || null,
+    }, Date.now());
+  } catch {
+    return fallback();
+  }
 }
 
 function codexGauges(codex) {
@@ -563,11 +659,11 @@ function codexGauges(codex) {
 }
 
 async function pollNow() {
-  const result = await fetchUsage();
-  const codex = readCodexUsage();
+  const [result, codex] = await Promise.all([fetchUsage(), fetchCodexUsage()]);
   const claudeLocal = readClaudeLocalUsage();
   if (result.ok) {
     lastUsage = result;
+    saveUsageCache(result);
   }
   maybeNotify(result.ok ? result.data : null, codex);
   const payload = result.ok ? { ...result } : { ...result, stale: lastUsage };
@@ -582,6 +678,21 @@ function startPolling() {
   pollTimer = setInterval(pollNow, Math.max(1, settings.pollMinutes) * 60 * 1000);
   pollNow();
 }
+function cachedUsagePayload() {
+  if (!lastUsage || !lastUsage.data) return null;
+  const payload = { ...lastUsage, cached: true };
+  payload.claudeLocal = readClaudeLocalUsage();
+  payload.codex = readCodexUsage();
+  return payload;
+}
+function showWindowAfterInitialPaint(createdWindow) {
+  setTimeout(() => {
+    if (createdWindow.isDestroyed()) return;
+    createdWindow.setSkipTaskbar(true);
+    createdWindow.show();
+    scheduleWidgetPin(createdWindow);
+  }, 80);
+}
 
 // ---------- gauge extraction (shared logic with renderer, kept minimal here) ----------
 function extractGauges(data) {
@@ -590,9 +701,8 @@ function extractGauges(data) {
   const out = [];
   for (const [key, val] of Object.entries(data)) {
     if (skip.has(key) || !val || typeof val !== 'object' || Array.isArray(val)) continue;
+    if (!settings.showAmberLadder && isSpecialCategoryKey(key)) continue;
     if (typeof val.utilization !== 'number') continue;
-    const meaningful = val.limit_dollars != null || val.resets_at || val.utilization > 0;
-    if (!meaningful) continue;
     out.push({ key, utilization: val.utilization });
   }
   if (data.extra_usage && data.extra_usage.is_enabled) {
@@ -628,8 +738,20 @@ function maybeNotify(data, codex) {
 }
 
 // ---------- window ----------
+function appIconPath() {
+  return path.join(__dirname, 'assets', isMac ? 'app.icns' : 'app.ico');
+}
+
 function trayIconPath() {
+  if (isWindows) return appIconPath();
+  if (isMac) return path.join(__dirname, 'assets', 'trayTemplate.png');
   return path.join(__dirname, 'assets', 'tray.png');
+}
+
+function trayIconImage() {
+  const icon = nativeImage.createFromPath(trayIconPath());
+  if (isMac && !icon.isEmpty()) icon.setTemplateImage(true);
+  return icon;
 }
 
 function validatePos(pos) {
@@ -704,10 +826,13 @@ function createWindow() {
   win = new BrowserWindow({
     width: modeWidth(),
     height: settings.collapsed ? 52 : 300,
+    show: false,
+    icon: appIconPath(),
     x: pos ? pos.x : undefined,
     y: pos ? pos.y : undefined,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     resizable: true,
     minWidth: 200,
     minHeight: 52,
@@ -720,8 +845,21 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  if (settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
+  const createdWindow = win;
+  createdWindow.on('closed', () => {
+    if (win === createdWindow) win = null;
+  });
+  createdWindow.setSkipTaskbar(true);
+  createdWindow.once('ready-to-show', () => {
+    if (createdWindow.isDestroyed()) return;
+    createdWindow.setSkipTaskbar(true);
+  });
+  applyAlwaysOnTop(win);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  createdWindow.on('show', () => scheduleWidgetPin(createdWindow, 0));
+  createdWindow.on('focus', () => scheduleWidgetPin(createdWindow, 0));
+  createdWindow.on('blur', () => scheduleWidgetPin(createdWindow, 80));
 
   win.on('moved', () => {
     if (suppressMovePersistence) return;
@@ -745,6 +883,9 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('init', { collapsed: settings.collapsed });
     win.webContents.send('settings', publicSettings());
+    const cached = cachedUsagePayload();
+    if (cached) win.webContents.send('usage', cached);
+    showWindowAfterInitialPaint(createdWindow);
     pollNow();
   });
 
@@ -761,6 +902,75 @@ function createWindow() {
         app.quit();
       }, 5000);
     });
+  }
+}
+
+function liveWindow() {
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function setMacWorkspacePinned(target, pinned) {
+  if (!isMac || !target || target.isDestroyed()) return;
+  target.setVisibleOnAllWorkspaces(pinned, {
+    visibleOnFullScreen: pinned,
+    skipTransformProcessType: true,
+  });
+  if (typeof target.setHiddenInMissionControl === 'function') {
+    target.setHiddenInMissionControl(pinned);
+  }
+}
+
+function applyAlwaysOnTop(target = liveWindow()) {
+  if (!target || target.isDestroyed() || !settings.alwaysOnTop) return;
+  target.setSkipTaskbar(true);
+  setMacWorkspacePinned(target, true);
+  target.setAlwaysOnTop(true, 'screen-saver');
+}
+
+function clearAlwaysOnTop(target = liveWindow()) {
+  if (!target || target.isDestroyed()) return;
+  setMacWorkspacePinned(target, false);
+  target.setAlwaysOnTop(false);
+  target.setSkipTaskbar(true);
+}
+
+function keepWidgetPinned(target = liveWindow()) {
+  applyAlwaysOnTop(target);
+  if (!target || target.isDestroyed() || !target.isVisible()) return;
+  if (typeof target.moveTop === 'function') target.moveTop();
+}
+
+function scheduleWidgetPin(target = liveWindow(), delay = 80) {
+  if (!target || target.isDestroyed()) return;
+  setTimeout(() => {
+    if (!target.isDestroyed()) keepWidgetPinned(target);
+  }, delay);
+}
+
+function showExistingOrCreateWindow() {
+  const current = liveWindow();
+  if (current) {
+    current.setSkipTaskbar(true);
+    current.show();
+    current.focus();
+    scheduleWidgetPin(current, 0);
+    return;
+  }
+  if (app.isReady()) createWindow();
+}
+
+function toggleWindowVisibility() {
+  const current = liveWindow();
+  if (!current) {
+    if (app.isReady()) createWindow();
+    return;
+  }
+  if (current.isVisible()) {
+    current.hide();
+  } else {
+    current.setSkipTaskbar(true);
+    current.show();
+    scheduleWidgetPin(current, 0);
   }
 }
 
@@ -823,7 +1033,7 @@ function rebuildTrayMenu() {
       label: settings.collapsed ? '展開面板' : '縮小成膠囊',
       click: () => setCollapsed(!settings.collapsed),
     },
-    { label: '顯示 / 隱藏', click: () => (win.isVisible() ? win.hide() : win.show()) },
+    { label: '顯示 / 隱藏', click: () => toggleWindowVisibility() },
     { label: '立即更新', click: () => pollNow() },
     { type: 'separator' },
     {
@@ -833,7 +1043,8 @@ function rebuildTrayMenu() {
       click: (item) => {
         settings.alwaysOnTop = item.checked;
         saveSettings();
-        win.setAlwaysOnTop(item.checked, 'screen-saver');
+        if (item.checked) applyAlwaysOnTop(win);
+        else clearAlwaysOnTop(win);
       },
     },
     {
@@ -867,7 +1078,7 @@ function rebuildTrayMenu() {
       },
     },
     {
-      label: '顯示 Amber Ladder',
+      label: '顯示特殊分類',
       type: 'checkbox',
       checked: settings.showAmberLadder,
       click: (item) => {
@@ -917,38 +1128,116 @@ function rebuildTrayMenu() {
     { type: 'separator' },
     { label: '結束', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
-  tray.setContextMenu(menu);
+  if (!isMac) tray.setContextMenu(menu);
   return menu;
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(trayIconPath());
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('Claude Usage Widget');
+  const icon = trayIconImage();
+  const trayImage = icon.isEmpty() ? nativeImage.createEmpty() : icon;
+  tray = isMac ? new Tray(trayImage, TRAY_GUID) : new Tray(trayImage);
+  tray.setToolTip(APP_DISPLAY_NAME);
   rebuildTrayMenu();
-  tray.on('click', () => (win.isVisible() ? win.hide() : win.show()));
+  tray.on('click', () => toggleWindowVisibility());
+  if (isMac) {
+    tray.on('right-click', () => {
+      const menu = rebuildTrayMenu();
+      if (menu) tray.popUpContextMenu(menu);
+    });
+  }
 }
 
 function updateTrayTooltip(data, codex) {
   if (!tray) return;
   const gauges = settings.showClaude ? extractGauges(data) : [];
   if (settings.showCodex) gauges.push(...codexGauges(codex));
-  if (!gauges.length) { tray.setToolTip('Claude Usage Widget'); return; }
+  if (!gauges.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
   const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
-  tray.setToolTip(`Claude Usage — 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
+  tray.setToolTip(`${APP_DISPLAY_NAME} - 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
+}
+
+function configureMacApp() {
+  if (!isMac) return;
+  Menu.setApplicationMenu(null);
+  if (typeof app.setActivationPolicy === 'function') app.setActivationPolicy('accessory');
+  if (app.dock && typeof app.dock.hide === 'function') app.dock.hide();
 }
 
 // ---------- login item ----------
+function portableLoginItemPath() {
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  const candidates = [
+    process.env.PORTABLE_EXECUTABLE_FILE,
+    portableDir ? path.join(portableDir, 'usage widget.exe') : null,
+  ];
+  return candidates.find((p) => p && fs.existsSync(p)) || null;
+}
+
+function packagedLoginItemPath() {
+  const candidates = [
+    portableLoginItemPath(),
+    path.join(process.cwd(), 'usage widget.exe'),
+    process.execPath,
+  ];
+  return candidates.find((p) => p && fs.existsSync(p)) || process.execPath;
+}
+
+function clearLegacyLoginItems() {
+  if (!isWindows) return;
+  for (const name of LEGACY_LOGIN_ITEM_NAMES) {
+    try { app.setLoginItemSettings({ openAtLogin: false, name }); } catch {}
+  }
+}
+
+function setRunLoginItem(exePath, openAtLogin) {
+  if (openAtLogin) {
+    execFileSync('reg.exe', [
+      'add', LOGIN_ITEM_RUN_KEY,
+      '/v', LOGIN_ITEM_NAME,
+      '/t', 'REG_SZ',
+      '/d', '"' + exePath + '"',
+      '/f',
+    ], { windowsHide: true, stdio: 'ignore' });
+    return;
+  }
+  try {
+    execFileSync('reg.exe', [
+      'delete', LOGIN_ITEM_RUN_KEY,
+      '/v', LOGIN_ITEM_NAME,
+      '/f',
+    ], { windowsHide: true, stdio: 'ignore' });
+  } catch {}
+}
+
 function applyLoginItem() {
+  if (isMac) {
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.openAtLogin });
+    return;
+  }
+
   if (!app.isPackaged) {
     app.setLoginItemSettings({
       openAtLogin: settings.openAtLogin,
+      name: LOGIN_ITEM_NAME,
       path: process.execPath,
       args: [path.resolve(__dirname)],
     });
-  } else {
-    app.setLoginItemSettings({ openAtLogin: settings.openAtLogin });
+    return;
   }
+
+  clearLegacyLoginItems();
+  const portablePath = isWindows ? portableLoginItemPath() : null;
+  if (portablePath) {
+    setRunLoginItem(portablePath, settings.openAtLogin);
+    return;
+  }
+
+  app.setLoginItemSettings({
+    openAtLogin: settings.openAtLogin,
+    name: LOGIN_ITEM_NAME,
+    path: packagedLoginItemPath(),
+    args: [],
+  });
 }
 
 // ---------- IPC ----------
@@ -960,7 +1249,14 @@ ipcMain.on('resize-height', (_e, { height }) => {
   applyWidgetBounds({ width: modeWidth(), height });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
-ipcMain.on('refresh', () => pollNow());
+ipcMain.on('refresh', async () => {
+  if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: true });
+  try {
+    await pollNow();
+  } finally {
+    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: false });
+  }
+});
 ipcMain.on('open-menu', () => {
   const menu = rebuildTrayMenu();
   if (menu) menu.popup({ window: win });
@@ -981,7 +1277,10 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
     }
     case 'alwaysOnTop':
       settings.alwaysOnTop = !!value;
-      if (win && !win.isDestroyed()) win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
+      if (win && !win.isDestroyed()) {
+        if (settings.alwaysOnTop) applyAlwaysOnTop(win);
+        else clearAlwaysOnTop(win);
+      }
       break;
     case 'openAtLogin':
       settings.openAtLogin = !!value;
@@ -1017,11 +1316,17 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win) { win.show(); win.focus(); }
+    showExistingOrCreateWindow();
+  });
+
+  app.on('activate', () => {
+    showExistingOrCreateWindow();
   });
 
   app.whenReady().then(() => {
+    configureMacApp();
     loadSettings();
+    loadUsageCache();
     createWindow();
     createTray();
     applyLoginItem();
