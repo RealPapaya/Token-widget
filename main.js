@@ -155,6 +155,12 @@ let scanSeq = 0;
 let scanInFlight = null;
 const scanPending = new Map(); // id -> resolve
 
+// Hands control back to the event loop so queued IPC/window messages are
+// flushed before the next chunk of work runs.
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function failPendingScans() {
   for (const resolve of scanPending.values()) resolve(null);
   scanPending.clear();
@@ -329,7 +335,17 @@ function codexGauges(codex) {
   return out;
 }
 
-async function pollNow() {
+// Overlapping polls (tray 「立即更新」 mashed, or a manual refresh landing on top
+// of the timer) would race their `usage` sends. Collapse concurrent callers
+// onto the in-flight run.
+let pollInFlight = null;
+function pollNow() {
+  if (pollInFlight) return pollInFlight;
+  pollInFlight = runPoll().finally(() => { pollInFlight = null; });
+  return pollInFlight;
+}
+
+async function runPoll() {
   const [result, local] = await Promise.all([fetchUsage(), scanLocalUsage()]);
   const codex = await fetchCodexUsage(local);
   // On API failure (other than missing local credentials), check whether
@@ -352,11 +368,31 @@ async function pollNow() {
   updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex);
 }
 
+// Manual refresh, shared by the header button and the tray item. The spinner
+// state is pushed before any work starts and cleared in `finally`, so the tray
+// path animates the same way the in-app button does.
+async function requestRefresh() {
+  const notify = (active) => {
+    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active });
+  };
+  notify(true);
+  try {
+    await yieldToEventLoop(); // flush the spinner IPC before the poll's first chunk of work
+    await pollNow();
+  } finally {
+    notify(false);
+  }
+}
+
 function startPolling() {
   clearInterval(pollTimer);
   pollTimer = setInterval(pollNow, Math.max(1, settings.pollMinutes) * 60 * 1000);
   pollNow();
 }
+// Paints the window from cache the moment the renderer loads, so it must stay
+// cheap: no session breakdowns here. `claudeLocal` is omitted rather than left
+// empty (the renderer only overwrites it when the key is present), and the
+// `pollNow()` that runs right after this fills both in.
 function cachedUsagePayload() {
   if (!lastUsage || !lastUsage.data) return null;
   // claudeLocal / codex are intentionally omitted: the renderer only updates
@@ -713,7 +749,7 @@ function rebuildTrayMenu() {
       click: () => setCollapsed(!settings.collapsed),
     },
     { label: '顯示 / 隱藏', click: () => toggleWindowVisibility() },
-    { label: '立即更新', click: () => pollNow() },
+    { label: '立即更新', click: () => requestRefresh() },
     { type: 'separator' },
     {
       label: '永遠置頂',
@@ -928,14 +964,7 @@ ipcMain.on('resize-height', (_e, { height }) => {
   applyWidgetBounds({ width: modeWidth(), height });
 });
 ipcMain.on('toggle-collapse', () => setCollapsed(!settings.collapsed));
-ipcMain.on('refresh', async () => {
-  if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: true });
-  try {
-    await pollNow();
-  } finally {
-    if (win && !win.isDestroyed()) win.webContents.send('refresh-state', { active: false });
-  }
-});
+ipcMain.on('refresh', () => { requestRefresh(); });
 ipcMain.on('open-menu', () => {
   const menu = rebuildTrayMenu();
   if (menu) menu.popup({ window: win });

@@ -45,6 +45,17 @@ function labelForGauge(key) {
   return LABELS[key] || LABELS[normalized] || prettifyKey(key);
 }
 
+// A rolling 7-day window never resets more than 7 days out. When it does, the
+// account is on a monthly cycle (free plans), so "本週" would read wrong.
+// Half a day of slack keeps clock skew from flipping a fresh weekly window.
+const WEEKLY_MAX_MS = 7.5 * 24 * 60 * 60 * 1000;
+
+function periodLabel(label, resetsAt) {
+  if (!resetsAt || !label.includes('本週')) return label;
+  const ms = new Date(resetsAt) - Date.now();
+  return ms > WEEKLY_MAX_MS ? label.replace('本週', '本月') : label;
+}
+
 function prettifyKey(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
@@ -169,7 +180,7 @@ function normalize(data) {
     if (typeof val.utilization !== 'number') continue;
     gauges.push({
       key,
-      label: labelForGauge(key),
+      label: periodLabel(labelForGauge(key), val.resets_at),
       pct: Math.min(100, val.utilization),
       resetsAt: resetTimeForGauge(data, key, val),
       oneTime: ONE_TIME.has(key),
@@ -234,7 +245,8 @@ function codexGauges(codex) {
   const add = (d, label, key) => {
     if (!d || typeof d.pct !== 'number') return;
     out.push({
-      key, label,
+      key,
+      label: periodLabel(label, d.resetsAt),
       pct: Math.min(100, d.pct),
       resetsAt: d.resetsAt || null,
       oneTime: false,
@@ -280,6 +292,15 @@ function gaugeMotionKey(g) {
   return `${g.brand}:${g.key}`;
 }
 
+// This build runs without GPU compositing (see LESSONS.md
+// "disable-gpu-for-transparent-widget"), so every animated frame is rasterized
+// on the CPU by the renderer's main thread. Anything that stalls that thread —
+// a forced reflow per bar, one rAF loop per number — shows up as visible
+// stutter in the concurrently spinning refresh icon. Both helpers below
+// therefore batch: one forced reflow per render, one rAF loop for all counters.
+const pendingWidths = [];
+let widthFrame = null;
+
 function animateWidth(el, fromPct, toPct) {
   if (!el) return;
   const to = pctWidth(toPct);
@@ -289,11 +310,34 @@ function animateWidth(el, fromPct, toPct) {
   }
   el.style.transition = 'none';
   el.style.width = pctWidth(fromPct);
-  void el.offsetWidth;
-  el.style.transition = '';
-  requestAnimationFrame(() => {
-    el.style.width = to;
+  pendingWidths.push({ el, to });
+  if (widthFrame != null) return;
+  widthFrame = requestAnimationFrame(() => {
+    widthFrame = null;
+    const batch = pendingWidths.splice(0);
+    // Single forced layout commits every staged "from" width while transitions
+    // are still off; restoring them below then animates from → to.
+    void document.body.offsetWidth;
+    for (const item of batch) {
+      item.el.style.transition = '';
+      item.el.style.width = item.to;
+    }
   });
+}
+
+const PCT_ANIM_MS = 700;
+const pctAnimations = new Map(); // element -> { from, to, decimals, startedAt }
+let pctFrame = null;
+
+function pumpPctAnimations(now) {
+  pctFrame = null;
+  for (const [el, a] of pctAnimations) {
+    const progress = Math.min(1, (now - a.startedAt) / PCT_ANIM_MS);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = pctText(a.from + ((a.to - a.from) * eased), a.decimals);
+    if (progress >= 1) pctAnimations.delete(el);
+  }
+  if (pctAnimations.size) pctFrame = requestAnimationFrame(pumpPctAnimations);
 }
 
 function animatePctText(el, fromPct, toPct, decimals) {
@@ -301,19 +345,13 @@ function animatePctText(el, fromPct, toPct, decimals) {
   const from = clampPct(fromPct);
   const to = clampPct(toPct);
   if (prefersReducedMotion() || Math.abs(to - from) < 0.05) {
+    pctAnimations.delete(el);
     el.textContent = pctText(to, decimals);
     return;
   }
-  const duration = 700;
-  const startedAt = performance.now();
-  const tick = (now) => {
-    const progress = Math.min(1, (now - startedAt) / duration);
-    const eased = 1 - Math.pow(1 - progress, 3);
-    el.textContent = pctText(from + ((to - from) * eased), decimals);
-    if (progress < 1) requestAnimationFrame(tick);
-  };
   el.textContent = pctText(from, decimals);
-  requestAnimationFrame(tick);
+  pctAnimations.set(el, { from, to, decimals, startedAt: performance.now() });
+  if (pctFrame == null) pctFrame = requestAnimationFrame(pumpPctAnimations);
 }
 
 function animateInlineBars(root, selector) {

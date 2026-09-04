@@ -155,8 +155,12 @@ html, body {
 #btn-refresh.is-refreshing {
   color: var(--text);
 }
+/* Software compositing (GPU is off for this transparent window) repaints the
+   whole containing layer every frame unless the animated element gets one of
+   its own. will-change keeps the spin from repainting the header beside it. */
 #btn-refresh.is-refreshing .refresh-icon {
   animation: spin 0.8s linear infinite;
+  will-change: transform;
 }
 
 /* gauge rows */
@@ -248,7 +252,7 @@ html, body {
   transition: width var(--motion-med) var(--motion-curve), background var(--motion-fast) ease, opacity var(--motion-fast) ease;
 }
 .fill.warn { background: var(--warn); }
-.fill.crit { background: var(--crit); animation: pulse 1.6s ease-in-out infinite; }
+.fill.crit { background: var(--crit); animation: pulse 1.6s ease-in-out infinite; will-change: opacity; }
 .fill.codex { background: var(--codex); }
 @keyframes pulse { 50% { opacity: 0.65; } }
 
