@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { Worker } = require('worker_threads');
+const antigravity = require('./antigravity');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CRED_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
@@ -55,6 +56,7 @@ const DEFAULTS = {
   showClaude: true,
   showAmberLadder: false,
   showCodex: true,
+  showAntigravity: true,
   displayCurrency: 'USD',
   pollMinutes: 3,
   pos: null,             // {x, y}
@@ -335,6 +337,29 @@ function codexGauges(codex) {
   return out;
 }
 
+// Antigravity's CLI writes a quota cache but nothing refreshes it in the
+// background, so a snapshot older than a day is flagged rather than shown as
+// live truth. Purely local: no network call.
+const ANTIGRAVITY_STALE_MS = 24 * 60 * 60 * 1000;
+function readAntigravityUsage() {
+  let usage;
+  try { usage = antigravity.readCliUsage(); } catch { return null; }
+  if (!usage) return null;
+  return {
+    ...usage,
+    stale: !usage.updatedAt || (Date.now() - usage.updatedAt) > ANTIGRAVITY_STALE_MS,
+  };
+}
+
+function antigravityGauges(ag) {
+  if (!ag || !Array.isArray(ag.models)) return [];
+  return ag.models.map((m) => ({
+    key: `antigravity_${m.id}`,
+    utilization: m.pct,
+    resetsAt: m.resetsAt,
+  }));
+}
+
 // Overlapping polls (tray 「立即更新」 mashed, or a manual refresh landing on top
 // of the timer) would race their `usage` sends. Collapse concurrent callers
 // onto the in-flight run.
@@ -348,6 +373,7 @@ function pollNow() {
 async function runPoll() {
   const [result, local] = await Promise.all([fetchUsage(), scanLocalUsage()]);
   const codex = await fetchCodexUsage(local);
+  const ag = settings.showAntigravity ? readAntigravityUsage() : null;
   // On API failure (other than missing local credentials), check whether
   // Anthropic is having a global incident so the footer can say so.
   let serviceStatus = null;
@@ -358,14 +384,15 @@ async function runPoll() {
     lastUsage = result;
     saveUsageCache(result);
   }
-  maybeNotify(result.ok ? result.data : null, codex);
+  maybeNotify(result.ok ? result.data : null, codex, ag);
   const payload = result.ok ? { ...result } : { ...result, stale: lastUsage };
   // Omit claudeLocal when the scan failed so the renderer keeps its last data.
   if (local) payload.claudeLocal = local.claudeLocal;
   payload.codex = codex;
+  payload.antigravity = ag;
   payload.serviceStatus = serviceStatus;
   if (win && !win.isDestroyed()) win.webContents.send('usage', payload);
-  updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex);
+  updateTrayTooltip(result.ok ? result.data : (lastUsage && lastUsage.data), codex, ag);
 }
 
 // Manual refresh, shared by the header button and the tray item. The spinner
@@ -432,16 +459,20 @@ function severityOf(pct) {
   return 'normal';
 }
 
-function maybeNotify(data, codex) {
+function maybeNotify(data, codex, ag) {
   if (!settings.notify) { lastSeverity = {}; return; }
   const gauges = settings.showClaude ? extractGauges(data) : [];
   if (settings.showCodex) gauges.push(...codexGauges(codex));
+  // A stale cache would re-fire warnings for a window that has long since
+  // reset, so it never drives notifications.
+  if (settings.showAntigravity && ag && !ag.stale) gauges.push(...antigravityGauges(ag));
   for (const g of gauges) {
     const sev = severityOf(g.utilization);
     const prev = lastSeverity[g.key] || 'normal';
     const rank = { normal: 0, warn: 1, crit: 2 };
     if (rank[sev] > rank[prev] && Notification.isSupported()) {
-      const brand = g.key.startsWith('codex_') ? 'Codex' : 'Claude';
+      const brand = g.key.startsWith('codex_') ? 'Codex'
+        : g.key.startsWith('antigravity_') ? 'Antigravity' : 'Claude';
       new Notification({
         title: `${brand} 用量警示`,
         body: `${g.key} 已使用 ${g.utilization.toFixed(1)}%${sev === 'crit' ? '，即將達到上限！' : ''}`,
@@ -704,10 +735,14 @@ function hasCodexSessions(dir = CODEX_SESSIONS_DIR) {
   }
   return false;
 }
+function antigravityAvailable() {
+  try { return antigravity.hasAntigravityCli(); } catch { return false; }
+}
 function detectAvailability() {
   return {
     claudeAvailable: fs.existsSync(CRED_PATH),
     codexAvailable: hasCodexSessions(),
+    antigravityAvailable: antigravityAvailable(),
   };
 }
 
@@ -716,6 +751,7 @@ function publicSettings() {
     showClaude: settings.showClaude,
     showAmberLadder: settings.showAmberLadder,
     showCodex: settings.showCodex,
+    showAntigravity: settings.showAntigravity,
     displayCurrency: settings.displayCurrency === 'TWD' ? 'TWD' : 'USD',
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
@@ -814,6 +850,17 @@ function rebuildTrayMenu() {
       },
     },
     {
+      label: '顯示 Antigravity 用量',
+      type: 'checkbox',
+      checked: settings.showAntigravity,
+      click: (item) => {
+        settings.showAntigravity = item.checked;
+        saveSettings();
+        pushSettings();
+        pollNow();
+      },
+    },
+    {
       label: '金額幣值',
       submenu: [
         {
@@ -862,10 +909,11 @@ function createTray() {
   }
 }
 
-function updateTrayTooltip(data, codex) {
+function updateTrayTooltip(data, codex, ag) {
   if (!tray) return;
   const gauges = settings.showClaude ? extractGauges(data) : [];
   if (settings.showCodex) gauges.push(...codexGauges(codex));
+  if (settings.showAntigravity && ag) gauges.push(...antigravityGauges(ag));
   if (!gauges.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
   const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
   tray.setToolTip(`${APP_DISPLAY_NAME} - 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
@@ -1005,6 +1053,10 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
       break;
     case 'showCodex':
       settings.showCodex = !!value;
+      pollNow();
+      break;
+    case 'showAntigravity':
+      settings.showAntigravity = !!value;
       pollNow();
       break;
     case 'displayCurrency':

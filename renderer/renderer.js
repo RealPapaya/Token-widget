@@ -14,6 +14,25 @@ function codexLogoSvg() {
     `<path fill="#FAF9F5" d="${OPENAI_LOGO_PATH}"/></svg>`;
 }
 
+// ---------- Antigravity logo (Gemini-style four-point star) ----------
+const ANTIGRAVITY_LOGO_PATH = 'M12 0c0 6.627 5.373 12 12 12-6.627 0-12 5.373-12 12 0-6.627-5.373-12-12-12 6.627 0 12-5.373 12-12z';
+function antigravityLogoSvg() {
+  return '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    `<path fill="#A78BFA" d="${ANTIGRAVITY_LOGO_PATH}"/></svg>`;
+}
+
+// Per-brand display name / logo, so render paths don't grow a ternary chain
+// each time a brand is added.
+const BRAND_NAMES = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
+function brandName(brand) {
+  return BRAND_NAMES[brand] || 'Claude';
+}
+function brandLogoSvg(brand) {
+  if (brand === 'codex') return codexLogoSvg();
+  if (brand === 'antigravity') return antigravityLogoSvg();
+  return claudeLogoSvg();
+}
+
 // ---------- labels for known API keys ----------
 const LABELS = {
   five_hour: '目前 Session（5 小時）',
@@ -161,7 +180,9 @@ function resetTimeForGauge(data, key, val) {
 function fillClassForGauge(g) {
   const sev = severityOf(g.pct);
   if (sev !== 'normal') return sev;
-  return g.brand === 'codex' ? 'codex' : '';
+  if (g.brand === 'codex') return 'codex';
+  if (g.brand === 'antigravity') return 'antigravity';
+  return '';
 }
 
 function pctClassForGauge(g) {
@@ -219,6 +240,7 @@ let collapsed = false;
 let showClaude = true;
 let showAmberLadder = false;
 let showCodex = true;
+let showAntigravity = true;
 let displayCurrency = 'USD';
 let pollMinutes = 3;
 let settingsOpen = false;
@@ -235,6 +257,7 @@ let manualRefreshSawUsage = false;
 let lastData = null;   // raw Anthropic payload, kept so a settings change can re-normalize
 let lastClaudeLocal = null;
 let lastCodex = null;  // latest Codex snapshot from main
+let lastAntigravity = null; // latest Antigravity CLI snapshot from main
 let lastServiceStatus = null; // Anthropic status page snapshot (only set when the API errored)
 
 // Build gauge rows for Codex (OpenAI) usage. Same shape as normalize()'s rows,
@@ -259,10 +282,38 @@ function codexGauges(codex) {
   return out;
 }
 
+// Build gauge rows for Antigravity (Google) usage — one row per model quota,
+// tagged brand:'antigravity'. The CLI cache isn't refreshed in the background,
+// so a stale snapshot says so in the subtext instead of posing as live.
+function antigravityGauges(ag) {
+  if (!ag || !Array.isArray(ag.models)) return [];
+  return ag.models.map((m) => ({
+    key: `antigravity_${m.id}`,
+    label: m.label,
+    pct: Math.min(100, m.pct),
+    resetsAt: m.resetsAt || null,
+    oneTime: false,
+    dollars: null,
+    brand: 'antigravity',
+    subtext: ag.stale ? `快取資料 ${fmtStaleAge(ag.updatedAt)}` : '',
+  }));
+}
+
+// Age of the Antigravity cache, for the "資料可能過期" hint.
+function fmtStaleAge(updatedAt) {
+  if (!updatedAt) return '時間未知';
+  const days = Math.floor((Date.now() - updatedAt) / (24 * 60 * 60 * 1000));
+  if (days >= 1) return `${days} 天前`;
+  const hours = Math.max(1, Math.floor((Date.now() - updatedAt) / (60 * 60 * 1000)));
+  return `${hours} 小時前`;
+}
+
 // Combined list actually shown. Each brand can be toggled independently;
 // the per-row logo (Claude / OpenAI) tells them apart.
 function displayGauges() {
-  return (showClaude ? currentGauges : []).concat(showCodex ? codexGauges(lastCodex) : []);
+  return (showClaude ? currentGauges : [])
+    .concat(showCodex ? codexGauges(lastCodex) : [])
+    .concat(showAntigravity ? antigravityGauges(lastAntigravity) : []);
 }
 
 const $ = (id) => document.getElementById(id);
@@ -1244,14 +1295,13 @@ function renderGauges() {
   }
   let prevBrand = null;
   for (const g of gauges) {
-    const isCodex = g.brand === 'codex';
     if (prevBrand !== g.brand) {
       if (prevBrand) {
         const div = document.createElement('div');
         div.className = 'gauge-divider';
         box.appendChild(div);
       }
-      appendBrandHeader(box, g.brand, `${isCodex ? 'Codex' : 'Claude'} usage limits`);
+      appendBrandHeader(box, g.brand, `${brandName(g.brand)} usage limits`);
     }
     prevBrand = g.brand;
     const row = document.createElement('div');
@@ -1272,7 +1322,7 @@ function renderGauges() {
 
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
-    const logo = `<span class="row-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>`;
+    const logo = `<span class="row-logo">${brandLogoSvg(g.brand)}</span>`;
     const motionKey = gaugeMotionKey(g);
     const previousPct = previousGaugeWidths.has(motionKey) ? previousGaugeWidths.get(motionKey) : 0;
     row.innerHTML =
@@ -1380,7 +1430,7 @@ function setManualRefreshActive(active) {
   renderStatus();
 }
 function topGaugeByBrand(gauges) {
-  const brands = ['claude', 'codex'];
+  const brands = ['claude', 'codex', 'antigravity'];
   return brands.map((brand) => gauges
     .filter((g) => g.brand === brand)
     .reduce((top, g) => (!top || g.pct > top.pct ? g : top), null))
@@ -1404,16 +1454,15 @@ function renderCapsule(gauges) {
   const rows = topGaugeByBrand(gauges);
   const nextCapsuleWidths = new Map();
   for (const g of rows) {
-    const isCodex = g.brand === 'codex';
     const fillClass = fillClassForGauge(g);
     const pctClass = pctClassForGauge(g);
     const previousPct = previousCapsuleWidths.has(g.brand) ? previousCapsuleWidths.get(g.brand) : 0;
     const row = document.createElement('div');
     row.className = `capsule-item brand-${g.brand}`;
     row.innerHTML =
-      `<span class="capsule-logo">${isCodex ? codexLogoSvg() : claudeLogoSvg()}</span>` +
+      `<span class="capsule-logo">${brandLogoSvg(g.brand)}</span>` +
       `<span class="capsule-main">` +
-      `<span class="capsule-name">${isCodex ? 'Codex' : 'Claude'}</span>` +
+      `<span class="capsule-name">${brandName(g.brand)}</span>` +
       `<span class="capsule-bar"><span class="fill ${fillClass}" style="width:${pctWidth(previousPct)}"></span></span>` +
       `</span>` +
       `<span class="capsule-pct ${pctClass}">${pctText(previousPct, 0)}</span>`;
@@ -1424,7 +1473,7 @@ function renderCapsule(gauges) {
   }
   previousCapsuleWidths = nextCapsuleWidths;
 
-  const summary = rows.map((g) => `${g.brand === 'codex' ? 'Codex' : 'Claude'} ${g.pct.toFixed(1)}%`).join(' / ');
+  const summary = rows.map((g) => `${brandName(g.brand)} ${g.pct.toFixed(1)}%`).join(' / ');
   const soonest = gauges
     .filter((g) => g.resetsAt && !g.oneTime)
     .sort((a, b) => new Date(a.resetsAt) - new Date(b.resetsAt))[0];
@@ -1481,6 +1530,7 @@ window.widget.onSettings((s) => {
   showClaude = s.showClaude !== false;
   showAmberLadder = s.showAmberLadder === true;
   showCodex = s.showCodex !== false;
+  showAntigravity = s.showAntigravity !== false;
   displayCurrency = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
   if (typeof s.pollMinutes === 'number') pollMinutes = s.pollMinutes;
   syncSettingsControls(s);
@@ -1502,6 +1552,7 @@ function syncSettingsControls(s) {
     'set-showClaude': s.showClaude !== false,
     'set-showAmberLadder': s.showAmberLadder === true,
     'set-showCodex': s.showCodex !== false,
+    'set-showAntigravity': s.showAntigravity !== false,
     'set-notify': s.notify !== false,
     'set-alwaysOnTop': s.alwaysOnTop !== false,
     'set-openAtLogin': s.openAtLogin !== false,
@@ -1513,6 +1564,7 @@ function syncSettingsControls(s) {
   // When a CLI isn't detected locally, its "顯示 …" toggle can't be enabled.
   applyAvailability('set-showClaude', 'row-showClaude', s.claudeAvailable !== false);
   applyAvailability('set-showCodex', 'row-showCodex', s.codexAvailable !== false);
+  applyAvailability('set-showAntigravity', 'row-showAntigravity', s.antigravityAvailable !== false);
 }
 
 function applyAvailability(inputId, rowId, available) {
@@ -1570,6 +1622,7 @@ const TOGGLE_KEYS = {
   'set-showClaude': 'showClaude',
   'set-showAmberLadder': 'showAmberLadder',
   'set-showCodex': 'showCodex',
+  'set-showAntigravity': 'showAntigravity',
   'set-notify': 'notify',
   'set-alwaysOnTop': 'alwaysOnTop',
   'set-openAtLogin': 'openAtLogin',
@@ -1583,6 +1636,7 @@ window.widget.onUsage((payload) => {
   usingCachedUsage = payload.cached === true;
   if ('claudeLocal' in payload) lastClaudeLocal = payload.claudeLocal;
   if ('codex' in payload) lastCodex = payload.codex;
+  if ('antigravity' in payload) lastAntigravity = payload.antigravity;
   if ('serviceStatus' in payload) lastServiceStatus = payload.serviceStatus;
   if (payload.ok) {
     lastError = null;

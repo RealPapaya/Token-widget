@@ -262,6 +262,126 @@ function unwrapSentinel(buf) {
   return decoded.length ? decoded : buf;
 }
 
+// ---------- Antigravity CLI (agy / cockpit) usage ----------
+// The IDE's state.vscdb only carries credit sentinels, not per-model quota, so
+// the usable numbers come from the CLI's cockpit cache. Both files there are
+// plain JSON, no SQLite or protobuf needed:
+//   quota_history/<hash>.json                 -> per-model % history + resetTime
+//   quota_api_v1_plugin/authorized/<hash>.json -> per-model quotaInfo snapshot
+const AG_COCKPIT_CACHE = path.join(os.homedir(), '.antigravity_cockpit', 'cache');
+
+// Newest (by mtime) *.json in `dir`, parsed. Null when absent or unreadable.
+function readNewestJson(dir) {
+  let names;
+  try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { return null; }
+  let best = null;
+  for (const n of names) {
+    const full = path.join(dir, n);
+    let st;
+    try { st = fs.statSync(full); } catch { continue; }
+    if (!st.isFile()) continue;
+    if (!best || st.mtimeMs > best.mtimeMs) best = { full, mtimeMs: st.mtimeMs };
+  }
+  if (!best) return null;
+  try { return JSON.parse(fs.readFileSync(best.full, 'utf8')); } catch { return null; }
+}
+
+const AG_MODEL_LABELS = {
+  'claude-4-5': 'Claude',
+  'g3-pro': 'Gemini Pro',
+  'g3-flash': 'Gemini Flash',
+  'g3-image': 'Gemini Image',
+};
+
+// A quota window whose resetTime has already passed has rolled over: the cache
+// still holds the pre-reset percentage because nothing rewrote it, so report a
+// fresh window instead of a stale bar.
+function normalizeWindow(pct, resetMs) {
+  if (resetMs && resetMs <= Date.now()) return { pct: 0, resetsAt: null };
+  return { pct, resetsAt: resetMs ? new Date(resetMs).toISOString() : null };
+}
+
+// Latest point per model out of quota_history. `remainingPercentage` counts
+// down, so used% is its complement.
+function modelsFromHistory(hist) {
+  const models = hist && hist.models;
+  if (!models || typeof models !== 'object') return [];
+  const out = [];
+  for (const [id, m] of Object.entries(models)) {
+    const points = (m && Array.isArray(m.points)) ? m.points : [];
+    let latest = null;
+    for (const p of points) {
+      if (!p || typeof p.remainingPercentage !== 'number') continue;
+      if (!latest || (p.timestamp || 0) > (latest.timestamp || 0)) latest = p;
+    }
+    if (!latest) continue;
+    const w = normalizeWindow(
+      Math.max(0, Math.min(100, 100 - latest.remainingPercentage)),
+      latest.resetTime || null
+    );
+    out.push({ id, label: (m && m.label) || AG_MODEL_LABELS[id] || id, ...w });
+  }
+  return out;
+}
+
+// Fallback source: payload.models.<id>.quotaInfo = { remainingFraction, resetTime }.
+// Only the ids we have labels for are surfaced; the payload lists dozens of
+// internal models that would swamp the gauge list.
+function modelsFromAuthorized(auth) {
+  const models = auth && auth.payload && auth.payload.models;
+  if (!models || typeof models !== 'object') return [];
+  const out = [];
+  for (const [id, m] of Object.entries(models)) {
+    const q = m && m.quotaInfo;
+    if (!q || typeof q.remainingFraction !== 'number') continue;
+    const label = AG_MODEL_LABELS[id];
+    if (!label) continue;
+    const resetMs = q.resetTime ? Date.parse(q.resetTime) : null;
+    out.push({
+      id,
+      label,
+      ...normalizeWindow(Math.max(0, Math.min(100, (1 - q.remainingFraction) * 100)),
+        Number.isFinite(resetMs) ? resetMs : null),
+    });
+  }
+  return out;
+}
+
+const AG_MODEL_ORDER = ['claude-4-5', 'g3-pro', 'g3-flash', 'g3-image'];
+
+// Read the CLI's cached quota. Returns { models, updatedAt, email } or null.
+// `models` is [{ id, label, pct, resetsAt }] ordered for display.
+function readCliUsage(cacheDir = AG_COCKPIT_CACHE) {
+  const hist = readNewestJson(path.join(cacheDir, 'quota_history'));
+  const auth = readNewestJson(path.join(cacheDir, 'quota_api_v1_plugin', 'authorized'));
+  let models = modelsFromHistory(hist);
+  if (!models.length) models = modelsFromAuthorized(auth);
+  if (!models.length) return null;
+  models.sort((a, b) => {
+    const ia = AG_MODEL_ORDER.indexOf(a.id), ib = AG_MODEL_ORDER.indexOf(b.id);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  const updatedAt = Math.max(
+    (hist && hist.updatedAt) || 0,
+    (auth && auth.updatedAt) || 0
+  ) || null;
+  return {
+    models,
+    updatedAt,
+    email: (hist && hist.email) || (auth && auth.email) || null,
+  };
+}
+
+// True when the CLI has written a quota cache on this machine.
+function hasAntigravityCli(cacheDir = AG_COCKPIT_CACHE) {
+  for (const sub of [['quota_history'], ['quota_api_v1_plugin', 'authorized']]) {
+    try {
+      if (fs.readdirSync(path.join(cacheDir, ...sub)).some((n) => n.endsWith('.json'))) return true;
+    } catch {}
+  }
+  return false;
+}
+
 // True when Antigravity is installed with a readable profile on this machine.
 function hasAntigravityState(dbPath = AG_STATE_DB) {
   try { return fs.statSync(dbPath).isFile(); } catch { return false; }
@@ -269,6 +389,9 @@ function hasAntigravityState(dbPath = AG_STATE_DB) {
 
 module.exports = {
   AG_STATE_DB,
+  AG_COCKPIT_CACHE,
+  readCliUsage,
+  hasAntigravityCli,
   readSqliteTable,
   decodeProto,
   readStateBlobs,

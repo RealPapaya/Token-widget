@@ -11,6 +11,7 @@
   --warn: #F0B429;
   --crit: #E5484D;
   --codex: #4F9CF9;
+  --antigravity: #A78BFA;
   --motion-fast: 160ms;
   --motion-med: 520ms;
   --motion-curve: cubic-bezier(0.22, 1, 0.36, 1);
@@ -216,6 +217,7 @@ html, body {
 .gauge-pct.crit { color: var(--crit); font-weight: 700; }
 .gauge.brand-claude .gauge-pct:not(.warn):not(.crit) { color: var(--orange); }
 .gauge.brand-codex .gauge-pct:not(.warn):not(.crit) { color: var(--codex); }
+.gauge.brand-antigravity .gauge-pct:not(.warn):not(.crit) { color: var(--antigravity); }
 
 .brand-header {
   display: flex;
@@ -229,6 +231,7 @@ html, body {
 }
 .brand-header.claude { color: var(--orange); }
 .brand-header.codex { color: var(--codex); }
+.brand-header.antigravity { color: var(--antigravity); }
 .brand-dot {
   width: 7px;
   height: 7px;
@@ -254,6 +257,7 @@ html, body {
 .fill.warn { background: var(--warn); }
 .fill.crit { background: var(--crit); animation: pulse 1.6s ease-in-out infinite; will-change: opacity; }
 .fill.codex { background: var(--codex); }
+.fill.antigravity { background: var(--antigravity); }
 @keyframes pulse { 50% { opacity: 0.65; } }
 
 /* inline brand logo inside a gauge label (Codex) */
@@ -746,6 +750,7 @@ html, body {
   color: var(--orange);
 }
 .capsule-item.brand-codex .capsule-name { color: var(--codex); }
+.capsule-item.brand-antigravity .capsule-name { color: var(--antigravity); }
 .capsule-main {
   display: flex;
   flex-direction: column;
@@ -773,6 +778,7 @@ html, body {
   white-space: nowrap;
 }
 .capsule-item.brand-codex .capsule-pct { color: var(--codex); }
+.capsule-item.brand-antigravity .capsule-pct { color: var(--antigravity); }
 .capsule-item .capsule-pct.warn { color: var(--warn); }
 .capsule-item .capsule-pct.crit { color: var(--crit); }
 .capsule-empty {
