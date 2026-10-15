@@ -242,6 +242,7 @@ let showAmberLadder = false;
 let showCodex = true;
 let showAntigravity = true;
 let displayCurrency = 'USD';
+let capsuleWindow = 'auto';
 let pollMinutes = 3;
 let settingsOpen = false;
 let usageViewOpen = false;
@@ -1429,16 +1430,41 @@ function setManualRefreshActive(active) {
   }
   renderStatus();
 }
+// 'five_hour' / 'seven_day' for the main rolling-window gauges (Claude and
+// Codex), null for everything else (per-model weekly, credits, Antigravity).
+function gaugeWindow(g) {
+  const m = /(?:^|_)(five_hour|seven_day)$/.exec(normalizeGaugeKey(g.key));
+  return m ? m[1] : null;
+}
+
+// One row per brand: the gauge matching the user's capsuleWindow choice, or
+// the highest one when the brand has no such gauge (or the choice is 'auto').
 function topGaugeByBrand(gauges) {
   const brands = ['claude', 'codex', 'antigravity'];
-  return brands.map((brand) => gauges
-    .filter((g) => g.brand === brand)
-    .reduce((top, g) => (!top || g.pct > top.pct ? g : top), null))
-    .filter(Boolean);
+  return brands.map((brand) => {
+    const own = gauges.filter((g) => g.brand === brand);
+    const picked = capsuleWindow === 'auto' ? [] : own.filter((g) => gaugeWindow(g) === capsuleWindow);
+    return (picked.length ? picked : own)
+      .reduce((top, g) => (!top || g.pct > top.pct ? g : top), null);
+  }).filter(Boolean);
+}
+
+// The capsule picker only appears once a 5hr or weekly gauge exists, and only
+// offers the windows actually present.
+function syncCapsuleWindowOptions(gauges) {
+  const row = $('row-capsuleWindow');
+  const select = $('set-capsuleWindow');
+  if (!row || !select) return;
+  const present = new Set(gauges.map(gaugeWindow).filter(Boolean));
+  for (const opt of select.options) {
+    if (opt.value !== 'auto') opt.hidden = !present.has(opt.value);
+  }
+  row.classList.toggle('hidden', present.size === 0);
 }
 
 function renderCapsule(gauges) {
   gauges = gauges || displayGauges();
+  syncCapsuleWindowOptions(gauges);
   const box = $('capsule-items');
   if (!box) return;
   box.innerHTML = '';
@@ -1532,6 +1558,7 @@ window.widget.onSettings((s) => {
   showCodex = s.showCodex !== false;
   showAntigravity = s.showAntigravity !== false;
   displayCurrency = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
+  capsuleWindow = ['five_hour', 'seven_day'].includes(s.capsuleWindow) ? s.capsuleWindow : 'auto';
   if (typeof s.pollMinutes === 'number') pollMinutes = s.pollMinutes;
   syncSettingsControls(s);
   if (lastData) currentGauges = normalize(lastData);
@@ -1548,6 +1575,8 @@ function syncSettingsControls(s) {
   }
   const currencySelect = $('set-displayCurrency');
   if (currencySelect) currencySelect.value = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
+  const capsuleSelect = $('set-capsuleWindow');
+  if (capsuleSelect) capsuleSelect.value = capsuleWindow;
   const toggles = {
     'set-showClaude': s.showClaude !== false,
     'set-showAmberLadder': s.showAmberLadder === true,
@@ -1616,6 +1645,12 @@ $('set-displayCurrency').addEventListener('change', (e) => {
   renderGauges();
   if (usageViewOpen) renderUsageView();
   window.widget.setSetting('displayCurrency', displayCurrency);
+});
+
+$('set-capsuleWindow').addEventListener('change', (e) => {
+  capsuleWindow = e.target.value;
+  renderGauges();
+  window.widget.setSetting('capsuleWindow', capsuleWindow);
 });
 
 const TOGGLE_KEYS = {

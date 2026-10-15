@@ -58,6 +58,7 @@ const DEFAULTS = {
   showCodex: true,
   showAntigravity: true,
   displayCurrency: 'USD',
+  capsuleWindow: 'auto', // collapsed capsule gauge: 'auto' (highest) | 'five_hour' | 'seven_day'
   pollMinutes: 3,
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
@@ -753,6 +754,7 @@ function publicSettings() {
     showCodex: settings.showCodex,
     showAntigravity: settings.showAntigravity,
     displayCurrency: settings.displayCurrency === 'TWD' ? 'TWD' : 'USD',
+    capsuleWindow: settings.capsuleWindow,
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
     openAtLogin: settings.openAtLogin,
@@ -1061,6 +1063,9 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
       break;
     case 'displayCurrency':
       settings.displayCurrency = value === 'TWD' ? 'TWD' : 'USD';
+      break;
+    case 'capsuleWindow':
+      settings.capsuleWindow = ['five_hour', 'seven_day'].includes(value) ? value : 'auto';
       break;
     default:
       return;

@@ -15,6 +15,16 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## box-shadow-in-a-tight-transparent-window-draws-a-box (2026-10-15)
+- Trap: `.panel` / `.capsule` had `box-shadow`, but the transparent window is sized to the element (+4px height). The shadow filled the transparent area outside the rounded corners and got clipped by the window rectangle.
+- Cost: The user saw a faint dark square frame behind the rounded widget.
+- Rule: Don't put outer `box-shadow` on a surface that fills the window. If a shadow is ever wanted, the window must include transparent padding wide enough for the full blur.
+
+## smoke-test-with-user-data-dir-instead-of-killing-the-widget (2026-10-15)
+- Win: `electron . --user-data-dir=<scratch dir> --screenshot <png> [--collapsed]` gets its own single-instance lock and settings file, so the user's running widget (packaged `Claude Usage Widget.exe`) keeps running. Write `<scratch dir>/settings.json` first to test specific settings.
+- Benefit: No need to stop and restart the user's widget for screenshots, and per-setting screenshots are easy.
+- Rule: Use an isolated `--user-data-dir` for smoke tests. Stop the real widget only when the test needs real settings.
+
 ## sync-session-scans-freeze-the-widget-animations (2026-09-03)
 - Trap: `pollNow()` re-parsed every Claude transcript and Codex rollout synchronously on every poll and every 立即更新. Measured 921ms of blocking main-process I/O here (226 rollouts / 376 MB + 32 transcripts / 22 MB). Because this widget runs with GPU compositing off (see `disable-gpu-for-transparent-widget`), nothing can fall back to a compositor thread, so a blocked process freezes the refresh spinner outright.
 - Cost: The 立即更新 spin animation visibly stuttered for about a second on every refresh, and the cost grew with the user's session history.
