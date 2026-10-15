@@ -30,12 +30,12 @@ const HABIT_TOOL_NAMES = {
   Write: '建立檔案',
   Grep: '搜尋內容',
   Glob: '尋找檔案',
-  Agent: '派子代理',
-  Task: '派子代理',
+  Agent: '子代理',
+  Task: '子代理',
   WebSearch: '網路搜尋',
   WebFetch: '讀取網頁',
   TodoWrite: '待辦清單',
-  AskUserQuestion: '詢問你',
+  AskUserQuestion: '詢問使用者',
   Skill: '技能',
   NotebookEdit: '編輯筆記本',
 };
@@ -112,11 +112,11 @@ function appendHabitTiles(box, s) {
   const period = currentUsagePeriod();
   const tiles = [
     ['工作階段', `${sessions}`, sessions ? `平均 ${(s.prompts / sessions).toFixed(1)} 次提問` : ''],
-    ['提問次數', `${s.prompts}`, s.days ? `平均每天 ${Math.round(s.prompts / s.days)} 次` : ''],
-    ['活躍天數', `${s.days}`, period.days ? `共 ${period.days} 天` : '有使用的日子'],
-    ['Claude 工作', fmtHours(s.workMs), s.days ? `平均每天 ${fmtHours(s.workMs / s.days)}` : ''],
-    ['平均上下文', s.contextTurns ? fmtTokens(s.contextSum / s.contextTurns) : '--', s.contextPeak ? `最高 ${fmtTokens(s.contextPeak)}` : ''],
-    ['壓縮次數', `${compactions}`, compactions ? `自動 ${s.compactAuto} · 手動 ${s.compactManual}` : '沒有壓縮過'],
+    ['提問次數', `${s.prompts}`, s.days ? `日均 ${Math.round(s.prompts / s.days)} 次` : ''],
+    ['活躍天數', `${s.days}`, period.days ? `共 ${period.days} 天` : ''],
+    ['執行時間', fmtHours(s.workMs), s.days ? `日均 ${fmtHours(s.workMs / s.days)}` : ''],
+    ['平均上下文', s.contextTurns ? fmtTokens(s.contextSum / s.contextTurns) : '--', s.contextPeak ? `峰值 ${fmtTokens(s.contextPeak)}` : ''],
+    ['壓縮次數', `${compactions}`, `自動 ${s.compactAuto} · 手動 ${s.compactManual}`],
   ];
   appendStatTiles(box, tiles, 'claude');
 }
@@ -136,7 +136,7 @@ function appendHabitModels(box, s) {
     .map(([model, tokens]) => ({ name: formatModelName(model) || '未知模型', tokens }))
     .sort((a, b) => b.tokens - a.tokens);
   if (!rows.length) return;
-  appendHabitTitle(box, '模型使用比例', '依 Token');
+  appendHabitTitle(box, '模型分布', '依 Token');
   const total = rows.reduce((sum, r) => sum + r.tokens, 0);
   const shown = rows.slice(0, 5);
   const rest = rows.slice(5).reduce((sum, r) => sum + r.tokens, 0);
@@ -156,7 +156,7 @@ function appendHabitModels(box, s) {
 
 function appendHabitContext(box, s) {
   if (!s.contextTurns) return;
-  appendHabitTitle(box, '上下文長度', `每次回覆 · ${s.contextTurns} 次`);
+  appendHabitTitle(box, '上下文長度', `${s.contextTurns} 次回覆`);
   const total = s.contextBuckets.reduce((sum, v) => sum + v, 0) || 1;
   const bar = document.createElement('div');
   bar.className = 'habit-stack habit-context';
@@ -169,11 +169,10 @@ function appendHabitContext(box, s) {
     `<span><i class="c${i}"></i>${HABIT_CONTEXT_BUCKETS[i]} ${Math.round((v / total) * 100)}%</span>`).join('');
   box.appendChild(legend);
   const compactions = s.compactAuto + s.compactManual;
+  if (!compactions) return;
   const note = document.createElement('div');
   note.className = 'habit-note';
-  note.textContent = compactions
-    ? `壓縮 ${compactions} 次（自動 ${s.compactAuto}、手動 ${s.compactManual}），壓縮前平均 ${fmtTokens(s.compactPreTokens / compactions)}`
-    : '這段期間沒有壓縮對話，上下文都還在模型上限內。';
+  note.textContent = `壓縮前平均上下文 ${fmtTokens(s.compactPreTokens / compactions)}`;
   box.appendChild(note);
 }
 
@@ -181,7 +180,7 @@ function appendHabitHours(box, s) {
   const total = s.hours.reduce((sum, v) => sum + v, 0);
   if (!total) return;
   const peak = s.hours.indexOf(Math.max(...s.hours));
-  appendHabitTitle(box, '使用時段', `最常在 ${peak}:00–${peak + 1}:00 · ${Math.round((s.hours[peak] / total) * 100)}%`);
+  appendHabitTitle(box, '使用時段', `尖峰 ${peak}:00–${peak + 1}:00 · ${Math.round((s.hours[peak] / total) * 100)}%`);
   const max = s.hours[peak];
   const chart = document.createElement('div');
   chart.className = 'habit-hours';
@@ -203,7 +202,7 @@ function appendHabitTools(box, s) {
   const rows = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
   if (!rows.length) return;
   const total = rows.reduce((sum, r) => sum + r[1], 0);
-  appendHabitTitle(box, '最常用的工具', `共 ${total.toLocaleString('en-US')} 次`);
+  appendHabitTitle(box, '工具呼叫', `共 ${total.toLocaleString('en-US')} 次`);
   const list = document.createElement('div');
   list.className = 'insight-list habit-tools';
   for (const [label, n] of rows.slice(0, 5)) {
@@ -221,7 +220,7 @@ function appendHabitTools(box, s) {
   if (agents || s.subagentTokens) {
     const note = document.createElement('div');
     note.className = 'habit-note';
-    note.textContent = `派出子代理 ${agents} 次，子代理用掉 ${s.tokens ? Math.round((s.subagentTokens / s.tokens) * 100) : 0}% 的 Token。`;
+    note.textContent = `子代理 ${agents} 次 · 佔 Token ${s.tokens ? Math.round((s.subagentTokens / s.tokens) * 100) : 0}%`;
     box.appendChild(note);
   }
 }

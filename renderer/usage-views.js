@@ -6,15 +6,15 @@
 
 const TOKEN_PARTS = {
   claude: [
-    { name: '讀快取', desc: '重複送出的對話內容，從快取讀取，最便宜' },
-    { name: '寫入快取', desc: '第一次存進快取的內容' },
-    { name: '新的輸入', desc: '沒有命中快取的輸入' },
-    { name: '回覆輸出', desc: 'Claude 寫出的內容，單價最高' },
+    { name: '快取讀取', desc: '命中提示快取的輸入，單價為一般輸入的 10%' },
+    { name: '快取寫入', desc: '首次寫入提示快取的輸入' },
+    { name: '未快取輸入', desc: '未命中提示快取的輸入' },
+    { name: '輸出', desc: '模型產生的輸出，單價最高' },
   ],
   codex: [
-    { name: '讀快取', desc: '重複送出的對話內容，從快取讀取' },
-    { name: '新的輸入', desc: '沒有命中快取的輸入' },
-    { name: '回覆輸出', desc: 'Codex 寫出的內容（含推理）' },
+    { name: '快取讀取', desc: '命中提示快取的輸入' },
+    { name: '未快取輸入', desc: '未命中提示快取的輸入' },
+    { name: '輸出', desc: '模型產生的輸出（含推理）' },
   ],
 };
 
@@ -113,7 +113,7 @@ function appendDailyChart(box, bars, brand) {
   const rows = keys.map((key) => byKey.get(key) || { key, tokens: 0, cost: 0 });
   const max = Math.max(...rows.map((r) => r.cost), 0);
   const active = rows.filter((r) => r.tokens > 0).length;
-  appendHabitTitle(box, '每日花費', `${active} / ${rows.length} 天有使用`);
+  appendHabitTitle(box, '每日成本', `活躍 ${active} / ${rows.length} 天`);
   const chart = document.createElement('div');
   chart.className = `habit-hours usage-days brand-${brand}`;
   chart.style.gridTemplateColumns = `repeat(${rows.length}, minmax(0, 1fr))`;
@@ -156,7 +156,6 @@ function appendUsageRows(box, rows, brand, mode) {
     row.innerHTML =
       `<div class="session-top"><span class="session-name">${escapeHtml(name)}</span>` +
       `<span class="session-pct">${fmtCost(estimateSessionCost(s, brand))}</span></div>` +
-      (task ? `<div class="session-task">${escapeHtml(task)}</div>` : '') +
       `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
       `<div class="session-meta"><span>${escapeHtml(`${count}${fmtTokens(s.totalTokens)} Token · ${pct.toFixed(1)}%`)}</span>` +
       `<span>${s.updatedAt ? `最後 ${fmtSessionTime(s.updatedAt)}` : ''}</span></div>`;
@@ -177,8 +176,8 @@ function renderUsageBrand(box, brand, sessions, bars) {
   const activeDays = bars.filter((b) => b.tokens > 0).length || 1;
   appendStatTiles(box, [
     ['總用量', fmtTokens(tokens), 'Token'],
-    ['預估花費', fmtCost(cost), '依 API 公開價估算'],
-    ['平均每天', fmtCost(cost / activeDays), `${activeDays} 天有使用`],
+    ['預估成本', fmtCost(cost), 'API 牌價估算'],
+    ['日均成本', fmtCost(cost / activeDays), `活躍 ${activeDays} 天`],
   ], brand);
   appendDailyChart(box, bars, brand);
   const rows = usageSessionMode === 'project' ? aggregateProjectSessions(sessions, brand) : sessions;
@@ -239,50 +238,42 @@ function appendTokenComposition(box, brand, sessions) {
   const inputTotal = tokenTotal - p.tokens[outIdx];
   const hitRate = inputTotal > 0 ? (p.tokens[0] / inputTotal) * 100 : 0;
   appendStatTiles(box, [
-    ['快取命中率', `${Math.round(hitRate)}%`, '越高越省錢'],
-    ['預估花費', fmtCost(costTotal), '依 API 公開價估算'],
-    ['回覆輸出', fmtTokens(p.tokens[outIdx]), costTotal ? `占花費 ${Math.round((p.cost[outIdx] / costTotal) * 100)}%` : ''],
+    ['快取命中率', `${Math.round(hitRate)}%`, '佔總輸入'],
+    ['預估成本', fmtCost(costTotal), 'API 牌價估算'],
+    ['輸出', fmtTokens(p.tokens[outIdx]), costTotal ? `佔成本 ${Math.round((p.cost[outIdx] / costTotal) * 100)}%` : ''],
   ], brand);
 
   const pct = (v, total) => (total > 0 ? (v / total) * 100 : 0);
-  for (const [label, values, total] of [['Token 都用在哪', p.tokens, tokenTotal], ['錢都花在哪', p.cost, costTotal]]) {
+  for (const [label, values, total] of [['Token 組成', p.tokens, tokenTotal], ['成本組成', p.cost, costTotal]]) {
     appendHabitTitle(box, label, label.startsWith('Token') ? `${fmtTokens(total)} Token` : fmtCost(total));
     const bar = document.createElement('div');
-    bar.className = 'habit-stack';
+    bar.className = `habit-stack brand-${brand}`;
     bar.innerHTML = values.map((v, i) => `<div class="habit-seg t${i}" style="width:${pct(v, total)}%"></div>`).join('');
     box.appendChild(bar);
   }
   const legend = document.createElement('div');
-  legend.className = 'habit-legend token-legend';
-  legend.innerHTML = '<div class="head"><i></i><span></span><strong>Token</strong><em>花費</em></div>' +
+  legend.className = `habit-legend token-legend brand-${brand}`;
+  // Codex reasoning share rides on the output row's tooltip.
+  const descOf = (part, i) => (i === outIdx && p.reasoning
+    ? `${part.desc}，推理佔 ${Math.round(pct(p.reasoning, p.tokens[outIdx]))}%` : part.desc);
+  legend.innerHTML = '<div class="head"><i></i><span></span><strong>Token</strong><em>成本</em></div>' +
     parts.map((part, i) =>
-      `<div data-tooltip="${escapeHtml(part.desc)}"><i class="t${i}"></i><span>${escapeHtml(part.name)}</span>` +
+      `<div data-tooltip="${escapeHtml(descOf(part, i))}"><i class="t${i}"></i><span>${escapeHtml(part.name)}</span>` +
       `<strong>${pct(p.tokens[i], tokenTotal).toFixed(1)}%</strong><em>${pct(p.cost[i], costTotal).toFixed(0)}%</em></div>`).join('');
   box.appendChild(legend);
 
-  const top = p.cost.indexOf(Math.max(...p.cost));
-  const cacheCostPct = Math.round(pct(p.cost[0], costTotal));
-  const note = document.createElement('div');
-  note.className = 'habit-note';
-  note.textContent = `每 100 個 Token 有 ${Math.round(pct(p.tokens[0], tokenTotal))} 個是讀快取，單價只有一般輸入的 1/10。` +
-    (top === 0
-      ? `但因為量大，它仍是最大的花費（${cacheCostPct}%）：對話越長、來回越多，這部分就越高。`
-      : `讀快取占花費 ${cacheCostPct}%，花最多錢的是「${parts[top].name}」（${Math.round(pct(p.cost[top], costTotal))}%）。`) +
-    (p.reasoning ? ` 回覆中有 ${Math.round(pct(p.reasoning, p.tokens[outIdx]))}% 是推理。` : '');
-  box.appendChild(note);
-
   const models = Object.entries(p.models).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   if (models.length > 1) {
-    appendHabitTitle(box, '各模型花費');
+    appendHabitTitle(box, '模型成本');
     const list = document.createElement('div');
     list.className = 'insight-list habit-tools';
-    for (const [m, v] of models.slice(0, 5)) {
+    for (const [i, [m, v]] of models.slice(0, 5).entries()) {
       const row = document.createElement('div');
       row.className = `insight-row brand-${brand}`;
       row.innerHTML =
         `<div class="insight-top"><span class="insight-name">${escapeHtml(formatModelName(m) || '未知模型')}</span>` +
-        `<span class="insight-pct">${fmtCost(v)}</span></div>` +
-        `<div class="insight-bar"><div style="width:${pct(v, costTotal)}%"></div></div>`;
+        `<span class="insight-pct" style="color:var(--model-${i})">${fmtCost(v)}</span></div>` +
+        `<div class="insight-bar"><div style="width:${pct(v, costTotal)}%;background:var(--model-${i})"></div></div>`;
       list.appendChild(row);
     }
     box.appendChild(list);

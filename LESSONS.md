@@ -15,6 +15,21 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## portable-launcher-kill-leaves-the-app-running (2026-10-15)
+- Trap: `scripts/copy-release-exe.js` stops only `usage widget.exe`, which is the portable launcher. The real app (`Claude Usage Widget.exe`, unpacked under `%TEMP%\<random>\`) keeps running the old build.
+- Cost: After the copy, the old widget would still be on screen, and its single-instance lock would block the new EXE from showing.
+- Rule: After `npm run dist:win`, also stop any `Claude Usage Widget` processes whose path is under `%TEMP%`, then start `usage widget.exe` and confirm a process with window title `usage widget` exists.
+
+## screenshot-inner-views-with-a-scratch-wrapper (2026-10-15)
+- Win: A scratch `shot.js` that hooks `app.on('browser-window-created')`, then `require`s the repo's `main.js`, can set renderer state (`usageAnalysisSheet`, `usageInsightMode`, …) via `executeJavaScript`, call `applyUsageView(true)`, scroll `.panel-body`, and `capturePage()` each page. Run it with `npx electron <scratch>/shot.js --user-data-dir=<scratch>/ud`. Leave out `--screenshot`, because its 5s auto-quit fires before the cold scan finishes. Instead, poll until `lastClaudeLocal.daily` exists.
+- Benefit: You get before/after screenshots of the 用量分布 / 使用分析 sub-views without adding test hooks to the app.
+- Rule: For UI changes inside the usage view, capture every sub-view this way before and after the change.
+
+## codex-token-counts-are-subsets (2026-10-15)
+- Trap: In Codex rollouts, `total_tokens = input_tokens + output_tokens`. `cached_input_tokens` is part of input and `reasoning_output_tokens` is part of output. Claude's fields are separate and additive.
+- Cost: Token 組成 summed all four for Codex (double count), and the Codex cost charged cached tokens at both the input rate and the cache rate.
+- Rule: For Codex, new input = input − cached, and reasoning is a share of output. Never add Codex fields the way Claude fields are added.
+
 ## claude-transcript-usage-repeats-per-content-block (2026-10-15)
 - Trap: Claude Code writes one transcript line per assistant content block, each repeating the same `message.id` and `usage` (the last line has the final `output_tokens`). Resumed or forked sessions also copy earlier lines into a new file. Subagent files (`…/subagents/*.jsonl`) carry the parent's `sessionId`.
 - Cost: Summing every line counted tokens twice (54.5% of summed tokens were duplicates), so session totals and cost estimates were about 2.2x too high. Subagent files also showed up as separate sessions.

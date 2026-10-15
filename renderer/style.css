@@ -12,6 +12,13 @@
   --crit: #E5484D;
   --codex: #4F9CF9;
   --antigravity: #A78BFA;
+  /* Model series colors (rank order), shared by 模型分布 and 模型成本 */
+  --model-0: #D97757;
+  --model-1: #5FB3A1;
+  --model-2: #D9B26F;
+  --model-3: #C77D9A;
+  --model-4: #8C9BB5;
+  --model-5: #6B6A65;
   --motion-fast: 160ms;
   --motion-med: 520ms;
   --motion-curve: cubic-bezier(0.22, 1, 0.36, 1);
@@ -485,18 +492,6 @@ html, body {
   gap: 8px;
 }
 .session-top { align-items: baseline; margin-bottom: 4px; }
-.session-task {
-  margin: 0 0 5px;
-  color: var(--text);
-  opacity: 0.86;
-  font-size: 11.5px;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
 .session-name {
   min-width: 0;
   overflow: hidden;
@@ -671,12 +666,12 @@ html, body {
 }
 .habit-seg { height: 100%; }
 .habit-seg + .habit-seg { border-left: 1px solid rgba(38, 38, 36, 0.9); }
-.s0 { background: var(--orange); }
-.s1 { background: #E9A98F; }
-.s2 { background: #B5583B; }
-.s3 { background: #F3D2C4; }
-.s4 { background: #7E3F2B; }
-.s5 { background: var(--dim); }
+.s0 { background: var(--model-0); }
+.s1 { background: var(--model-1); }
+.s2 { background: var(--model-2); }
+.s3 { background: var(--model-3); }
+.s4 { background: var(--model-4); }
+.s5 { background: var(--model-5); }
 .c0 { background: #5B5A55; }
 .c1 { background: #F3D2C4; }
 .c2 { background: #E9A98F; }
@@ -773,6 +768,9 @@ html, body {
 .t1 { background: #E9A98F; }
 .t2 { background: var(--orange); }
 .t3 { background: #7E3F2B; }
+.brand-codex .t0 { background: #CFE2FD; }
+.brand-codex .t1 { background: #4F9CF9; }
+.brand-codex .t2 { background: #285FA8; }
 .token-legend div { grid-template-columns: 10px minmax(0, 1fr) 52px 40px; cursor: default; }
 .token-legend div.head {
   padding: 0 0 2px;
@@ -781,7 +779,6 @@ html, body {
 }
 .token-legend div.head strong { font-weight: 400; text-align: right; }
 .token-legend strong { text-align: right; }
-.token-legend + .habit-note { padding-top: 4px; }
 .habit-stack + .habit-title { padding-top: 8px; }
 /* ---------- settings page ---------- */
 .settings { padding: 4px 0 6px; }
