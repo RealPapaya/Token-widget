@@ -506,6 +506,10 @@ function claudeDailyHabits(transcripts) {
         compactPreTokens: 0,
         tools: {},
         sessions: [],
+        // [input, cacheRead, cacheWrite, output] — the day total, and per
+        // session per model so the renderer can price and rank by day.
+        usage: [0, 0, 0, 0],
+        sessionUsage: {},
       };
       sessionSets.set(key, new Set());
     }
@@ -519,6 +523,10 @@ function claudeDailyHabits(transcripts) {
       day.tokens += u.totalTokens;
       const m = turn.model || t.model || 'unknown';
       day.models[m] = (day.models[m] || 0) + u.totalTokens;
+      const split = [u.inputTokens, u.cachedInputTokens, u.cacheCreationInputTokens, u.outputTokens];
+      const perSession = day.sessionUsage[t.id] || (day.sessionUsage[t.id] = {});
+      const perModel = perSession[m] || (perSession[m] = [0, 0, 0, 0]);
+      split.forEach((v, i) => { day.usage[i] += v; perModel[i] += v; });
       for (const name of turn.tools) day.tools[name] = (day.tools[name] || 0) + 1;
       if (t.isSubagent || turn.sidechain) {
         day.subagentTokens += u.totalTokens;

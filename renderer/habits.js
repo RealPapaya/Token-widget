@@ -118,8 +118,13 @@ function appendHabitTiles(box, s) {
     ['平均上下文', s.contextTurns ? fmtTokens(s.contextSum / s.contextTurns) : '--', s.contextPeak ? `最高 ${fmtTokens(s.contextPeak)}` : ''],
     ['壓縮次數', `${compactions}`, compactions ? `自動 ${s.compactAuto} · 手動 ${s.compactManual}` : '沒有壓縮過'],
   ];
+  appendStatTiles(box, tiles, 'claude');
+}
+
+// Grid of [label, value, sub] stat tiles; shared with usage-views.js.
+function appendStatTiles(box, tiles, brand) {
   const grid = document.createElement('div');
-  grid.className = 'habit-tiles';
+  grid.className = `habit-tiles brand-${brand}`;
   grid.innerHTML = tiles.map(([label, value, sub]) =>
     `<div class="habit-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><em>${escapeHtml(sub)}</em></div>`).join('');
   box.appendChild(grid);

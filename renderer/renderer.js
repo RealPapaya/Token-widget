@@ -576,6 +576,7 @@ function escapeHtml(value) {
 }
 function fmtTokens(n) {
   n = Number(n) || 0;
+  if (n >= 1000000000) return `${(n / 1000000000).toFixed(2)}B`;
   if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K`;
   return n.toLocaleString('en-US');
@@ -627,8 +628,11 @@ function filterSessionsByPeriod(sessions) {
   const period = currentUsagePeriod();
   const rows = Array.isArray(sessions) ? sessions : [];
   if (!period.days) return rows.slice();
-  const cutoff = Date.now() - period.days * 24 * 60 * 60 * 1000;
-  return rows.filter((s) => sessionDateValue(s) >= cutoff);
+  // Calendar days, like the Claude day buckets: 1日 = since local midnight.
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (period.days - 1));
+  return rows.filter((s) => sessionDateValue(s) >= start.getTime());
 }
 
 function sessionTotal(sessions, key) {
@@ -671,7 +675,9 @@ function estimateSessionCost(session, brand) {
     }
     return claudeCostAtRate(session, rateForClaudeSession(session));
   }
-  return ((input * CODEX_RATE_PER_MTOK.input) + (cached * CODEX_RATE_PER_MTOK.cacheRead) + (output * CODEX_RATE_PER_MTOK.output)) / 1000000;
+  // Codex counts cached tokens inside input_tokens (and reasoning inside output).
+  const fresh = Math.max(0, input - cached);
+  return ((fresh * CODEX_RATE_PER_MTOK.input) + (cached * CODEX_RATE_PER_MTOK.cacheRead) + (output * CODEX_RATE_PER_MTOK.output)) / 1000000;
 }
 
 function estimateSessionsCost(sessions, brand) {
@@ -1029,56 +1035,6 @@ function collectCodexHabits(codex) {
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
-function collectTokenCompositionHabits(sessions, brand) {
-  sessions = Array.isArray(sessions) ? sessions : [];
-  if (!sessions.length) return [];
-  const total = sessionTotal(sessions, 'totalTokens');
-  const input = sessionTotal(sessions, 'inputTokens');
-  const cached = sessionTotal(sessions, 'cachedInputTokens');
-  const cacheWrite = sessionTotal(sessions, 'cacheCreationInputTokens');
-  const output = sessionTotal(sessions, 'outputTokens');
-  const reasoning = sessionTotal(sessions, 'reasoningOutputTokens');
-  const tokenTotal = Math.max(total, input + cached + cacheWrite + output + reasoning);
-  const habits = [
-    {
-      brand,
-      label: '一般輸入 Token',
-      pct: tokenTotal > 0 ? (input / tokenTotal) * 100 : null,
-      kind: '輸入',
-      detail: `${fmtTokens(input)} / ${fmtTokens(tokenTotal)} Token`,
-    },
-    {
-      brand,
-      label: '快取讀取 Token',
-      pct: tokenTotal > 0 ? (cached / tokenTotal) * 100 : null,
-      kind: '快取',
-      detail: `${fmtTokens(cached)} / ${fmtTokens(tokenTotal)} Token`,
-    },
-  ];
-  if (cacheWrite > 0) habits.push({
-    brand,
-    label: '快取建立 Token',
-    pct: tokenTotal > 0 ? (cacheWrite / tokenTotal) * 100 : null,
-    kind: '快取',
-    detail: `${fmtTokens(cacheWrite)} / ${fmtTokens(tokenTotal)} Token`,
-  });
-  if (output > 0) habits.push({
-    brand,
-    label: '輸出 Token',
-    pct: tokenTotal > 0 ? (output / tokenTotal) * 100 : null,
-    kind: '輸出',
-    detail: `${fmtTokens(output)} / ${fmtTokens(tokenTotal)} Token`,
-  });
-  if (reasoning > 0) habits.push({
-    brand,
-    label: '推理輸出 Token',
-    pct: tokenTotal > 0 ? (reasoning / tokenTotal) * 100 : null,
-    kind: '推理',
-    detail: `${fmtTokens(reasoning)} / ${fmtTokens(tokenTotal)} Token`,
-  });
-  return habits.filter((h) => h.pct == null || h.pct > 0);
-}
-
 function collectUsagePatternHabits(sessions, brand) {
   sessions = Array.isArray(sessions) ? sessions : [];
   if (!sessions.length) return [];
@@ -1151,12 +1107,6 @@ function collectUsagePatternHabits(sessions, brand) {
   return habits.filter((h) => h.pct == null || h.pct > 0);
 }
 
-function collectSessionHabits(sessions, brand) {
-  return usageInsightMode === 'tokens'
-    ? collectTokenCompositionHabits(sessions, brand)
-    : collectUsagePatternHabits(sessions, brand);
-}
-
 function renderInsightRows(box, habits, brand, emptyText, sessions = []) {
   appendBrandHeader(box, brand, brand === 'claude' ? 'Claude' : 'Codex');
   if (sessions.length) renderCostSummary(box, sessions, sessionTotal(sessions, 'totalTokens'), brand);
@@ -1182,15 +1132,19 @@ function renderInsightRows(box, habits, brand, emptyText, sessions = []) {
 
 function renderHabitSections(box) {
   appendInsightModeControls(box);
+  if (usageInsightMode === 'tokens') {
+    renderTokenCompositionView(box);
+    return;
+  }
   const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
   const claudeSessions = filterSessionsByPeriod(claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : []);
   const claudeDaily = lastClaudeLocal && lastClaudeLocal.daily;
-  if (usageInsightMode === 'patterns' && claudeDaily) {
+  if (claudeDaily) {
     appendBrandHeader(box, 'claude', 'Claude');
     if (!renderClaudeHabits(box, claudeDaily)) appendEmpty(box, '這個期間沒有 Claude 使用習慣資料。');
   } else renderInsightRows(
     box,
-    collectSessionHabits(claudeSessions, 'claude'),
+    collectUsagePatternHabits(claudeSessions, 'claude'),
     'claude',
     '這個期間沒有 Claude 使用習慣資料。',
     claudeSessions,
@@ -1200,82 +1154,25 @@ function renderHabitSections(box) {
   const codexSessions = filterSessionsByPeriod(codexData && Array.isArray(codexData.sessions) ? codexData.sessions : []);
   renderInsightRows(
     box,
-    collectSessionHabits(codexSessions, 'codex'),
+    collectUsagePatternHabits(codexSessions, 'codex'),
     'codex',
     '這個期間沒有 Codex 使用習慣資料。',
     codexSessions,
   );
 }
-function renderSessionRows(box, rows, total, brand = 'codex', mode = 'session') {
-  const period = currentUsagePeriod();
-  const isProject = mode === 'project';
-  const head = document.createElement('div');
-  head.className = 'session-summary';
-  head.innerHTML = `<span>${period.label}內 ${rows.length} 個${isProject ? '專案' : '工作階段'}</span><strong>${fmtTokens(total)} · ${fmtCost(estimateSessionsCost(rows, brand))}</strong>`;
-  box.appendChild(head);
-  renderCostSummary(box, rows, total, brand);
-
-  const list = document.createElement('div');
-  list.className = 'session-list';
-  for (const s of rows) {
-    const pct = total > 0 ? ((Number(s.totalTokens) || 0) / total) * 100 : 0;
-    const row = document.createElement('div');
-    row.className = `session-row brand-${brand} mode-${mode}`;
-    const task = taskLabelForSession(s, mode);
-    const tooltip = [isProject ? s.cwd : (s.projectLabel || s.cwd), task].filter(Boolean).join('\n');
-    if (tooltip) setTooltip(row, tooltip);
-    const label = escapeHtml(sessionNameForRow(s, isProject));
-    const taskHtml = task ? `<div class="session-task">${escapeHtml(task)}</div>` : '';
-    const metaLeft = isProject && s.sessionCount > 1
-      ? `${s.sessionCount} 個工作階段 · ${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`
-      : `${fmtTokens(s.totalTokens)} Token · ${fmtCost(estimateSessionCost(s, brand))}`;
-    row.innerHTML =
-      `<div class="session-top">` +
-      `<span class="session-name">${label}</span>` +
-      `<span class="session-pct">${pct.toFixed(1)}%</span>` +
-      `</div>` +
-      taskHtml +
-      `<div class="session-bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>` +
-      `<div class="session-meta"><span>${escapeHtml(metaLeft)}</span><span>${fmtSessionTime(s.updatedAt)}</span></div>`;
-    list.appendChild(row);
-  }
-  box.appendChild(list);
-}
-function renderSessionSections(box) {
-  appendSessionModeControls(box);
-  appendBrandHeader(box, 'claude', 'Claude');
-  const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
-  const claudeAll = claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : [];
-  const claudeSessions = filterSessionsByPeriod(claudeAll);
-  const claudeRows = usageSessionMode === 'project' ? aggregateProjectSessions(claudeSessions, 'claude') : claudeSessions;
-  if (!claudeRows.length) {
-    appendEmpty(box, `這個期間沒有 Claude ${usageSessionMode === 'project' ? '專案' : '工作階段'}比例明細。`, 'session-empty');
-  } else {
-    const total = sessionTotal(claudeRows, 'totalTokens');
-    renderSessionRows(box, claudeRows, total, 'claude', usageSessionMode);
-  }
-
-  appendBrandHeader(box, 'codex', 'Codex');
-  const data = lastCodex && lastCodex.sessions;
-  const allSessions = data && Array.isArray(data.sessions) ? data.sessions : [];
-  const sessions = filterSessionsByPeriod(allSessions);
-  const rows = usageSessionMode === 'project' ? aggregateProjectSessions(sessions, 'codex') : sessions;
-  if (!rows.length) {
-    appendEmpty(box, `這個期間沒有 Codex ${usageSessionMode === 'project' ? '專案' : '工作階段'}比例明細。`, 'session-empty');
-  } else {
-    const total = sessionTotal(rows, 'totalTokens');
-    renderSessionRows(box, rows, total, 'codex', usageSessionMode);
-  }
-}
 function renderUsageView() {
   const box = $('usage-view');
   if (!box) return;
+  // Rebuilding collapses the content for a moment; keep the reader's place.
+  const scroller = box.closest('.panel-body');
+  const scrollTop = scroller ? scroller.scrollTop : 0;
   box.innerHTML = '';
   appendUsageTabs(box);
   appendUsagePeriodControls(box);
   if (usageAnalysisSheet === 'habits') renderHabitSections(box);
-  else renderSessionSections(box);
+  else renderUsageDistribution(box);
   if (!box.children.length) box.innerHTML = '<div class="insight-empty">目前沒有可顯示的用量分析。</div>';
+  if (scroller) scroller.scrollTop = scrollTop;
   animateInlineBars(box, '.session-bar > div, .insight-bar > div');
 }
 function setMainViewVisible(id, visible, shouldAnimate) {
@@ -1543,8 +1440,16 @@ function requestResize(options = {}) {
       const target = collapsed ? $('capsule') : $('panel');
       if (!target) return;
       const rect = target.getBoundingClientRect();
-      const nextHeight = Math.ceil(rect.height) + 4;
-      if (!force && Math.abs(nextHeight - lastRequestedHeight) <= 1) return;
+      // Ask for the panel's natural height (body content unscrolled); main
+      // caps it to the screen and the body scrolls the rest.
+      const body = collapsed ? null : target.querySelector('.panel-body');
+      const overflow = body ? body.scrollHeight - body.clientHeight : 0;
+      const nextHeight = Math.ceil(rect.height + overflow) + 4;
+      // While the screen caps the window below the content, keep re-asking on
+      // each render (main no-ops on equal bounds) so moving to a taller or
+      // shorter screen re-fits without a dedicated listener.
+      const capped = window.innerHeight < nextHeight - 1;
+      if (!force && !capped && Math.abs(nextHeight - lastRequestedHeight) <= 1) return;
       lastRequestedHeight = nextHeight;
       window.widget.resizeHeight(nextHeight);
     });
@@ -1737,6 +1642,8 @@ window.addEventListener('resize', () => {
   lastWidth = window.innerWidth;
   requestResize({ delay: 120 });
 });
+// Tooltips are position:fixed, so drop them while the panel scrolls.
+document.addEventListener('scroll', () => hideTooltip(), true);
 
 // tick countdowns locally between polls
 setInterval(() => { if (displayGauges().length) renderGauges(); }, 30000);

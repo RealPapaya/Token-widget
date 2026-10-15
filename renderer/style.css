@@ -95,7 +95,22 @@ html, body {
   border-radius: 16px;
   padding: 12px 14px 10px;
   transform-origin: top center;
+  /* Never taller than the window (= panel + 4px); the body scrolls instead. */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 4px);
 }
+.panel > .header,
+.panel > .footer { flex-shrink: 0; }
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  margin-right: -5px;
+}
+.panel-body::-webkit-scrollbar { width: 5px; }
+.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
 
 .header {
   display: flex;
@@ -457,6 +472,7 @@ html, body {
 .session-list {
   max-height: 245px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 2px;
 }
 .session-list::-webkit-scrollbar { width: 5px; }
@@ -748,6 +764,25 @@ html, body {
 }
 .habit-tools { max-height: none; }
 .habit-tools .insight-row { padding: 5px 0; }
+
+/* ---------- 用量分布 / Token 組成 (usage-views.js) ---------- */
+.habit-tiles.brand-codex .habit-tile strong { color: var(--codex); }
+.usage-days { height: 40px; gap: 1px; }
+.usage-days.brand-codex i { background: var(--codex); }
+.t0 { background: #F3D2C4; }
+.t1 { background: #E9A98F; }
+.t2 { background: var(--orange); }
+.t3 { background: #7E3F2B; }
+.token-legend div { grid-template-columns: 10px minmax(0, 1fr) 52px 40px; cursor: default; }
+.token-legend div.head {
+  padding: 0 0 2px;
+  color: var(--dim);
+  font-size: 10.5px;
+}
+.token-legend div.head strong { font-weight: 400; text-align: right; }
+.token-legend strong { text-align: right; }
+.token-legend + .habit-note { padding-top: 4px; }
+.habit-stack + .habit-title { padding-top: 8px; }
 /* ---------- settings page ---------- */
 .settings { padding: 4px 0 6px; }
 .set-group { padding: 6px 0; }
