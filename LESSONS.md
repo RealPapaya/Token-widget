@@ -15,6 +15,11 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## fixed-tooltip-shrinks-near-the-right-edge (2026-10-15)
+- Trap: A `position: fixed` tooltip shrinks to fit the space between its `left` and the viewport's right edge. `transform: translate(-50%/-100%)` moves it afterward but does not give back the width. The clamp in `positionTooltip()` then measures the already-squeezed box.
+- Cost: Tooltips on the right-side header buttons (縮小) wrapped one character per line and showed as a tall, narrow box.
+- Rule: Keep `width: max-content` on `.theme-tooltip` (`max-width` still caps it). Never size a fixed or absolute popup from its anchor point alone.
+
 ## portable-launcher-kill-leaves-the-app-running (2026-10-15)
 - Trap: `scripts/copy-release-exe.js` stops only `usage widget.exe`, which is the portable launcher. The real app (`Claude Usage Widget.exe`, unpacked under `%TEMP%\<random>\`) keeps running the old build.
 - Cost: After the copy, the old widget would still be on screen, and its single-instance lock would block the new EXE from showing.

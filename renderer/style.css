@@ -53,6 +53,8 @@ html, body {
 .theme-tooltip {
   position: fixed;
   z-index: 20;
+  /* Fixed boxes shrink-to-fit the space right of `left`; translate() can't give it back. */
+  width: max-content;
   max-width: min(260px, calc(100vw - 20px));
   padding: 6px 8px;
   border: 1px solid var(--border);
