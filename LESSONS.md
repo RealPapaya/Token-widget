@@ -15,6 +15,21 @@ Machine-global lessons go to `C:\Users\morris_hsueh\.agents\institution\lessons.
 
 ---
 
+## claude-transcript-usage-repeats-per-content-block (2026-10-15)
+- Trap: Claude Code writes one transcript line per assistant content block, each repeating the same `message.id` and `usage` (the last line has the final `output_tokens`). Resumed or forked sessions also copy earlier lines into a new file. Subagent files (`…/subagents/*.jsonl`) carry the parent's `sessionId`.
+- Cost: Summing every line counted tokens twice (54.5% of summed tokens were duplicates), so session totals and cost estimates were about 2.2x too high. Subagent files also showed up as separate sessions.
+- Rule: Key assistant usage by `message.id` (later line wins) and let the oldest file own each id. Fold subagent files into their parent `sessionId`. Count typed prompts only: skip `isMeta`, `isSidechain`, tool_result, and bare slash-command or local-command wrappers.
+
+## stats-cache-json-goes-stale (2026-10-15)
+- Trap: `~/.claude/stats-cache.json` was last computed 2026-07-12, three months old, so habits built on it hid the current models (Opus 5.5).
+- Cost: The 使用習慣 view showed outdated model shares.
+- Rule: Compute habits from transcripts (`claudeLocal.daily` per-day buckets in local-usage.js), not from stats-cache.json.
+
+## new-main-process-module-must-join-build-files (2026-10-15)
+- Trap: `antigravity.js` was added (2722a8e) without adding it to `package.json` `build.files`. Source mode worked; the packaged EXE crashed at launch with `Cannot find module './antigravity'`.
+- Cost: The first rebuild after that commit gave the user a widget that would not open.
+- Rule: When adding any root-level `.js` that main.js requires, add it to `build.files` in the same change. After `npm run dist:win`, smoke-test `dist/win-unpacked/Claude Usage Widget.exe --user-data-dir=<scratch> --screenshot <png>` before relaunching the user's widget. A fresh data dir may still show 正在讀取 at 5s; that is the cold scan, not a failure.
+
 ## box-shadow-in-a-tight-transparent-window-draws-a-box (2026-10-15)
 - Trap: `.panel` / `.capsule` had `box-shadow`, but the transparent window is sized to the element (+4px height). The shadow filled the transparent area outside the rounded corners and got clipped by the window rectangle.
 - Cost: The user saw a faint dark square frame behind the rounded widget.

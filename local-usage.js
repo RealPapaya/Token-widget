@@ -224,7 +224,10 @@ function collectClaudeTranscriptFiles(dir, out) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectClaudeTranscriptFiles(p, out);
     else if (e.isFile() && e.name.endsWith('.jsonl')) {
-      try { out.push({ p, mtime: fs.statSync(p).mtimeMs }); } catch {}
+      try {
+        const st = fs.statSync(p);
+        out.push({ p, mtime: st.mtimeMs, size: st.size });
+      } catch {}
     }
   }
 }
@@ -241,27 +244,53 @@ function claudeMessageUsage(message) {
   return { inputTokens, cachedInputTokens, cacheCreationInputTokens, outputTokens, totalTokens };
 }
 
-function readClaudeTranscriptSessionUsage(file, mtime) {
-  let text;
-  try { text = tailRead(file, 2 * 1024 * 1024); } catch { return null; }
-  const lines = text.split('\n');
-  const usage = {
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    cacheCreationInputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-  };
+// A prompt the user actually typed: not tool results, injected meta/system
+// text, subagent instructions, or bare slash commands like /clear and /model.
+// Slash commands with arguments (skills such as `/note-intake <url>`) count.
+function isTypedClaudePrompt(obj) {
+  if (obj.type !== 'user' || obj.isMeta || obj.isSidechain || obj.isCompactSummary) return false;
+  const content = obj.message && obj.message.content;
+  let text = '';
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) {
+    if (content.some((item) => item && item.type === 'tool_result')) return false;
+    text = content.filter((item) => item && item.type === 'text').map((item) => item.text || '').join('\n');
+    if (!text.trim()) return content.some((item) => item && item.type === 'image');
+  } else return false;
+  text = text.trim();
+  if (!text) return false;
+  if (/^<command-(?:name|message)>/.test(text)) return /<command-args>\s*\S[\s\S]*<\/command-args>/.test(text);
+  return !/^(?:<(?:local-command|task-notification|bash-)|\[Request interrupted)/.test(text);
+}
+
+// `<command-name>/x</command-name>…<command-args>y</command-args>` → "/x y".
+function slashCommandText(text) {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text || '');
+  if (!name) return text;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text);
+  return `${name[1].trim()} ${args ? args[1].trim() : ''}`.trim();
+}
+
+// One transcript file reduced to what the session list and the habit stats
+// need. Assistant replies are written as one line per content block, every
+// line repeating the same message.id and usage (the last line has the final
+// output_tokens), so turns are keyed by message.id.
+function parseClaudeTranscript(file) {
+  const text = fs.readFileSync(file, 'utf8');
   let id = path.basename(file).replace(/\.jsonl$/, '');
   let cwd = null;
   let updatedAt = null;
   let startedAt = null;
   let model = null;
-  let assistantTurns = 0;
   let firstPrompt = '';
   let latestPrompt = '';
-  for (const line of lines) {
-    if (!line.trim() || !line.includes('"message"')) continue;
+  let fallbackPrompt = '';
+  const turns = new Map();
+  const prompts = [];
+  const compacts = [];
+  const work = [];
+  for (const line of text.split('\n')) {
+    if (!line.includes('"message"') && !line.includes('"subtype"')) continue;
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     if (obj.sessionId) id = obj.sessionId;
@@ -270,53 +299,165 @@ function readClaudeTranscriptSessionUsage(file, mtime) {
       if (!startedAt) startedAt = obj.timestamp;
       updatedAt = obj.timestamp;
     }
+    if (obj.type === 'system') {
+      if (obj.subtype === 'compact_boundary') {
+        const meta = obj.compactMetadata || {};
+        compacts.push({ ts: obj.timestamp, trigger: meta.trigger === 'manual' ? 'manual' : 'auto', preTokens: num(meta.preTokens) });
+      } else if (obj.subtype === 'turn_duration') {
+        work.push({ ts: obj.timestamp, ms: num(obj.durationMs) });
+      }
+      continue;
+    }
     if (obj.type === 'user') {
-      const prompt = compactTaskText(textFromContent(obj.message && obj.message.content), 140);
-      if (prompt) {
-        if (!firstPrompt) firstPrompt = prompt;
-        latestPrompt = prompt;
+      const prompt = compactTaskText(slashCommandText(textFromContent(obj.message && obj.message.content)), 140);
+      if (isTypedClaudePrompt(obj)) {
+        if (obj.timestamp) prompts.push(obj.timestamp);
+        if (prompt) {
+          if (!firstPrompt) firstPrompt = prompt;
+          latestPrompt = prompt;
+        }
+      } else if (prompt && !fallbackPrompt) {
+        fallbackPrompt = prompt;
       }
     }
-    if (obj.type !== 'assistant') continue;
-    if (obj.message && obj.message.model) model = obj.message.model;
-    const u = claudeMessageUsage(obj.message);
-    if (!u) continue;
-    assistantTurns += 1;
-    usage.inputTokens += u.inputTokens;
-    usage.cachedInputTokens += u.cachedInputTokens;
-    usage.cacheCreationInputTokens += u.cacheCreationInputTokens;
-    usage.outputTokens += u.outputTokens;
-    usage.totalTokens += u.totalTokens;
+    if (obj.type !== 'assistant' || !obj.message) continue;
+    const message = obj.message;
+    if (message.model && message.model !== '<synthetic>') model = message.model;
+    const usage = claudeMessageUsage(message);
+    if (!usage) continue;
+    const key = message.id || obj.uuid;
+    const tools = (Array.isArray(message.content) ? message.content : [])
+      .filter((item) => item && item.type === 'tool_use' && item.name)
+      .map((item) => item.name);
+    const prev = turns.get(key);
+    turns.set(key, {
+      id: key,
+      ts: prev ? prev.ts : obj.timestamp,
+      model: message.model && message.model !== '<synthetic>' ? message.model : (prev && prev.model) || null,
+      sidechain: obj.isSidechain === true,
+      usage,
+      tools: prev ? prev.tools.concat(tools) : tools,
+    });
   }
-  if (usage.totalTokens <= 0) return null;
-  const cwdName = cwd ? path.basename(cwd) : '';
-  const title = titleFromPrompt(firstPrompt, latestPrompt);
   return {
     id,
-    shortId: id.slice(0, 8),
     cwd,
-    label: title || cwdName || id.slice(0, 8),
-    projectLabel: cwdName,
-    title,
-    task: taskFromPrompt(firstPrompt, latestPrompt),
     startedAt,
-    updatedAt: updatedAt || new Date(mtime).toISOString(),
+    updatedAt,
     model,
-    assistantTurns,
-    ...usage,
+    firstPrompt: firstPrompt || fallbackPrompt,
+    latestPrompt: latestPrompt || fallbackPrompt,
+    isSubagent: file.split(path.sep).includes('subagents'),
+    turns: [...turns.values()],
+    prompts,
+    compacts,
+    work,
   };
 }
 
-function claudeSessionBreakdown(limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
+// Parsed transcripts keyed by path; reused while mtime + size are unchanged
+// (transcripts are append-only), so only the active session is re-parsed.
+const claudeTranscriptCache = new Map();
+
+function readClaudeTranscripts() {
   const files = [];
   collectClaudeTranscriptFiles(CLAUDE_PROJECTS_DIR, files);
-  files.sort((a, b) => b.mtime - a.mtime);
-  const sessions = [];
+  const seen = new Set();
+  const parsed = [];
   for (const f of files) {
-    const item = readClaudeTranscriptSessionUsage(f.p, f.mtime);
-    if (item) sessions.push(item);
-    if (sessions.length >= limit) break;
+    seen.add(f.p);
+    let entry = claudeTranscriptCache.get(f.p);
+    if (!entry || entry.mtime !== f.mtime || entry.size !== f.size) {
+      let data = null;
+      try { data = parseClaudeTranscript(f.p); } catch {}
+      entry = { mtime: f.mtime, size: f.size, data };
+      claudeTranscriptCache.set(f.p, entry);
+    }
+    if (entry.data) parsed.push({ ...entry.data, mtime: f.mtime });
   }
+  for (const p of claudeTranscriptCache.keys()) {
+    if (!seen.has(p)) claudeTranscriptCache.delete(p);
+  }
+  // Resumed/forked sessions copy earlier history into a new file; the file
+  // that started first owns each message.id so those turns are counted once.
+  // (Start time, not mtime: appending to the original later must not move
+  // ownership to the fork.)
+  const startOf = (t) => Date.parse(t.startedAt) || t.mtime;
+  parsed.sort((a, b) => startOf(a) - startOf(b));
+  const owned = new Set();
+  for (const t of parsed) {
+    t.turns = t.turns.filter((turn) => {
+      if (owned.has(turn.id)) return false;
+      owned.add(turn.id);
+      return true;
+    });
+  }
+  return parsed;
+}
+
+function emptyClaudeUsage() {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+}
+
+function addClaudeUsage(target, u) {
+  target.inputTokens += u.inputTokens;
+  target.cachedInputTokens += u.cachedInputTokens;
+  target.cacheCreationInputTokens += u.cacheCreationInputTokens;
+  target.outputTokens += u.outputTokens;
+  target.totalTokens += u.totalTokens;
+}
+
+// One row per sessionId: subagent transcripts (…/subagents/*.jsonl carry the
+// parent's sessionId) fold into their parent session.
+function claudeSessionBreakdown(transcripts, limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
+  const groups = new Map();
+  for (const t of transcripts) {
+    let g = groups.get(t.id);
+    if (!g) {
+      g = { id: t.id, main: null, mtime: 0, usage: emptyClaudeUsage(), modelUsage: {}, assistantTurns: 0, fallback: t };
+      groups.set(t.id, g);
+    }
+    if (!t.isSubagent && (!g.main || t.mtime > g.main.mtime)) g.main = t;
+    g.mtime = Math.max(g.mtime, t.mtime);
+    for (const turn of t.turns) {
+      g.assistantTurns += 1;
+      addClaudeUsage(g.usage, turn.usage);
+      const m = turn.model || t.model || 'unknown';
+      if (!g.modelUsage[m]) g.modelUsage[m] = emptyClaudeUsage();
+      addClaudeUsage(g.modelUsage[m], turn.usage);
+    }
+  }
+  const sessions = [...groups.values()]
+    .filter((g) => g.usage.totalTokens > 0)
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, limit)
+    .map((g) => {
+      const t = g.main || g.fallback;
+      const id = g.id;
+      const cwdName = t.cwd ? path.basename(t.cwd) : '';
+      const title = titleFromPrompt(t.firstPrompt, t.latestPrompt);
+      return {
+        id,
+        shortId: id.slice(0, 8),
+        cwd: t.cwd,
+        label: title || cwdName || id.slice(0, 8),
+        projectLabel: cwdName,
+        title,
+        task: taskFromPrompt(t.firstPrompt, t.latestPrompt),
+        startedAt: t.startedAt,
+        updatedAt: t.updatedAt || new Date(g.mtime).toISOString(),
+        model: t.model,
+        modelUsage: g.modelUsage,
+        assistantTurns: g.assistantTurns,
+        ...g.usage,
+      };
+    });
   sessions.sort((a, b) => b.totalTokens - a.totalTokens);
   const totalTokens = sessions.reduce((sum, s) => sum + s.totalTokens, 0);
   return {
@@ -328,6 +469,91 @@ function claudeSessionBreakdown(limit = CLAUDE_SESSION_BREAKDOWN_LIMIT) {
       share: totalTokens > 0 ? (s.totalTokens / totalTokens) * 100 : 0,
     })),
   };
+}
+
+// ---------- Claude daily habit buckets ----------
+// Habit stats are bucketed per local calendar day (over every transcript, not
+// just the capped session list) so the renderer can sum exactly the days in
+// the selected period, even for sessions that span several days.
+const CONTEXT_BUCKET_LIMITS = [50000, 100000, 200000, 400000];
+
+function localDayKey(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function claudeDailyHabits(transcripts) {
+  const days = {};
+  const sessionSets = new Map();
+  const dayOf = (ts) => {
+    const key = localDayKey(ts);
+    if (!key) return null;
+    if (!days[key]) {
+      days[key] = {
+        tokens: 0,
+        models: {},
+        subagentTokens: 0,
+        prompts: 0,
+        hours: new Array(24).fill(0),
+        workMs: 0,
+        contextSum: 0,
+        contextTurns: 0,
+        contextPeak: 0,
+        contextBuckets: new Array(CONTEXT_BUCKET_LIMITS.length + 1).fill(0),
+        compactAuto: 0,
+        compactManual: 0,
+        compactPreTokens: 0,
+        tools: {},
+        sessions: [],
+      };
+      sessionSets.set(key, new Set());
+    }
+    return days[key];
+  };
+  for (const t of transcripts) {
+    for (const turn of t.turns) {
+      const day = dayOf(turn.ts);
+      if (!day) continue;
+      const u = turn.usage;
+      day.tokens += u.totalTokens;
+      const m = turn.model || t.model || 'unknown';
+      day.models[m] = (day.models[m] || 0) + u.totalTokens;
+      for (const name of turn.tools) day.tools[name] = (day.tools[name] || 0) + 1;
+      if (t.isSubagent || turn.sidechain) {
+        day.subagentTokens += u.totalTokens;
+        continue;
+      }
+      sessionSets.get(localDayKey(turn.ts)).add(t.id);
+      const context = u.inputTokens + u.cachedInputTokens + u.cacheCreationInputTokens;
+      day.contextSum += context;
+      day.contextTurns += 1;
+      day.contextPeak = Math.max(day.contextPeak, context);
+      let bucket = CONTEXT_BUCKET_LIMITS.findIndex((limit) => context < limit);
+      if (bucket === -1) bucket = CONTEXT_BUCKET_LIMITS.length;
+      day.contextBuckets[bucket] += 1;
+    }
+    if (t.isSubagent) continue;
+    for (const ts of t.prompts) {
+      const day = dayOf(ts);
+      if (!day) continue;
+      day.prompts += 1;
+      day.hours[new Date(ts).getHours()] += 1;
+    }
+    for (const c of t.compacts) {
+      const day = dayOf(c.ts);
+      if (!day) continue;
+      if (c.trigger === 'manual') day.compactManual += 1;
+      else day.compactAuto += 1;
+      day.compactPreTokens += c.preTokens;
+    }
+    for (const w of t.work) {
+      const day = dayOf(w.ts);
+      if (day) day.workMs += w.ms;
+    }
+  }
+  for (const [key, set] of sessionSets) days[key].sessions = [...set];
+  return days;
 }
 
 function modelDisplayName(model) {
@@ -426,9 +652,11 @@ function latestCodexRateLimits() {
 // One full scan of all local usage sources. Called from the worker entry
 // below; everything returned must be structured-cloneable.
 function scanAll() {
+  const transcripts = readClaudeTranscripts();
   return {
     claudeLocal: {
-      sessions: claudeSessionBreakdown(),
+      sessions: claudeSessionBreakdown(transcripts),
+      daily: claudeDailyHabits(transcripts),
       habits: readClaudeStatsHabits(),
     },
     codexSessions: codexSessionBreakdown(),

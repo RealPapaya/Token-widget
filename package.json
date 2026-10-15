@@ -20,6 +20,7 @@
       "main.js",
       "preload.js",
       "local-usage.js",
+      "antigravity.js",
       "renderer/**/*",
       "assets/**/*",
       "package.json"

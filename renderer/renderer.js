@@ -243,6 +243,7 @@ let showCodex = true;
 let showAntigravity = true;
 let displayCurrency = 'USD';
 let capsuleWindow = 'auto';
+let gaugeVisibility = {};
 let pollMinutes = 3;
 let settingsOpen = false;
 let usageViewOpen = false;
@@ -311,10 +312,15 @@ function fmtStaleAge(updatedAt) {
 
 // Combined list actually shown. Each brand can be toggled independently;
 // the per-row logo (Claude / OpenAI) tells them apart.
-function displayGauges() {
+function providerGauges() {
   return (showClaude ? currentGauges : [])
     .concat(showCodex ? codexGauges(lastCodex) : [])
     .concat(showAntigravity ? antigravityGauges(lastAntigravity) : []);
+}
+
+// providerGauges() minus the ones unchecked in settings (gauge-settings.js).
+function displayGauges() {
+  return providerGauges().filter((g) => isGaugeVisible(g.key));
 }
 
 const $ = (id) => document.getElementById(id);
@@ -636,23 +642,34 @@ function cacheInputDenominator(input, cached, cacheWrite, total) {
   return Math.max(cacheTokens, Number(total) || 0);
 }
 
-function rateForClaudeSession(session) {
-  const model = String(session && session.model || '').toLowerCase();
+function rateForClaudeModel(model) {
+  model = String(model || '').toLowerCase();
   if (model.includes('opus')) return CLAUDE_RATES_PER_MTOK.opus;
   if (model.includes('haiku')) return CLAUDE_RATES_PER_MTOK.haiku;
   if (model.includes('sonnet')) return CLAUDE_RATES_PER_MTOK.sonnet;
   return CLAUDE_RATES_PER_MTOK.fallback;
 }
 
+function rateForClaudeSession(session) {
+  return rateForClaudeModel(session && session.model);
+}
+
+function claudeCostAtRate(u, rate) {
+  return (((Number(u.inputTokens) || 0) * rate.input) + ((Number(u.cachedInputTokens) || 0) * rate.cacheRead) +
+    ((Number(u.cacheCreationInputTokens) || 0) * rate.cacheWrite) + ((Number(u.outputTokens) || 0) * rate.output)) / 1000000;
+}
+
 function estimateSessionCost(session, brand) {
   if (typeof session.costUsd === 'number' && Number.isFinite(session.costUsd)) return session.costUsd;
   const input = Number(session.inputTokens) || 0;
   const cached = Number(session.cachedInputTokens) || 0;
-  const cacheWrite = Number(session.cacheCreationInputTokens) || 0;
   const output = Number(session.outputTokens) || 0;
   if (brand === 'claude') {
-    const rate = rateForClaudeSession(session);
-    return ((input * rate.input) + (cached * rate.cacheRead) + (cacheWrite * rate.cacheWrite) + (output * rate.output)) / 1000000;
+    // Sessions that mix models (Opus main + Haiku subagents) are priced per model.
+    if (session.modelUsage) {
+      return Object.entries(session.modelUsage).reduce((sum, [m, u]) => sum + claudeCostAtRate(u, rateForClaudeModel(m)), 0);
+    }
+    return claudeCostAtRate(session, rateForClaudeSession(session));
   }
   return ((input * CODEX_RATE_PER_MTOK.input) + (cached * CODEX_RATE_PER_MTOK.cacheRead) + (output * CODEX_RATE_PER_MTOK.output)) / 1000000;
 }
@@ -666,7 +683,9 @@ function costRateLabel(sessions, brand) {
     return brand === 'codex' ? CODEX_RATE_PER_MTOK.label : 'Claude 依工作階段加總估';
   }
   if (brand === 'codex') return CODEX_RATE_PER_MTOK.label;
-  const labels = new Set(sessions.map((s) => rateForClaudeSession(s).label));
+  const labels = new Set(sessions.flatMap((s) => (s.modelUsage
+    ? Object.keys(s.modelUsage).map((m) => rateForClaudeModel(m).label)
+    : [rateForClaudeSession(s).label])));
   if (!labels.size) return CLAUDE_RATES_PER_MTOK.fallback.label;
   return labels.size === 1 ? [...labels][0] : 'Claude 混合模型估';
 }
@@ -948,7 +967,7 @@ function pctFromTokenSum(sessions, predicate, total) {
 }
 
 function modelDisplayName(model) {
-  return String(model || '').replace(/^claude-/, '').replace(/-/g, ' ');
+  return formatModelName(model);
 }
 
 function sessionHour(session) {
@@ -1165,7 +1184,11 @@ function renderHabitSections(box) {
   appendInsightModeControls(box);
   const claudeData = lastClaudeLocal && lastClaudeLocal.sessions;
   const claudeSessions = filterSessionsByPeriod(claudeData && Array.isArray(claudeData.sessions) ? claudeData.sessions : []);
-  renderInsightRows(
+  const claudeDaily = lastClaudeLocal && lastClaudeLocal.daily;
+  if (usageInsightMode === 'patterns' && claudeDaily) {
+    appendBrandHeader(box, 'claude', 'Claude');
+    if (!renderClaudeHabits(box, claudeDaily)) appendEmpty(box, '這個期間沒有 Claude 使用習慣資料。');
+  } else renderInsightRows(
     box,
     collectSessionHabits(claudeSessions, 'claude'),
     'claude',
@@ -1284,6 +1307,7 @@ function renderLoadingState(box) {
 function renderGauges() {
   const box = $('gauges');
   const gauges = displayGauges();
+  renderGaugeSettings(providerGauges());
   const nextGaugeWidths = new Map();
   box.innerHTML = '';
   if (!gauges.length) {
@@ -1559,6 +1583,7 @@ window.widget.onSettings((s) => {
   showAntigravity = s.showAntigravity !== false;
   displayCurrency = s.displayCurrency === 'TWD' ? 'TWD' : 'USD';
   capsuleWindow = ['five_hour', 'seven_day'].includes(s.capsuleWindow) ? s.capsuleWindow : 'auto';
+  gaugeVisibility = s.gaugeVisibility && typeof s.gaugeVisibility === 'object' ? s.gaugeVisibility : {};
   if (typeof s.pollMinutes === 'number') pollMinutes = s.pollMinutes;
   syncSettingsControls(s);
   if (lastData) currentGauges = normalize(lastData);

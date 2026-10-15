@@ -58,10 +58,13 @@
       <div class="set-group">
         <label class="set-toggle" id="row-showClaude"><span>顯示 Claude 用量</span>
           <input type="checkbox" id="set-showClaude" /></label>
+        <div class="set-sublist hidden" id="gauges-claude"></div>
         <label class="set-toggle" id="row-showCodex"><span>顯示 Codex 用量</span>
           <input type="checkbox" id="set-showCodex" /></label>
+        <div class="set-sublist hidden" id="gauges-codex"></div>
         <label class="set-toggle" id="row-showAntigravity"><span>顯示 Antigravity 用量</span>
           <input type="checkbox" id="set-showAntigravity" /></label>
+        <div class="set-sublist hidden" id="gauges-antigravity"></div>
         <label class="set-toggle"><span>顯示特殊分類</span>
           <input type="checkbox" id="set-showAmberLadder" /></label>
         <label class="set-toggle"><span>用量警示通知</span>
@@ -85,6 +88,8 @@
     <button id="btn-expand" class="no-drag" data-tooltip="展開" data-placement="left" aria-label="展開">&#x2b;</button>
   </div>
 
+  <script src="habits.js"></script>
+  <script src="gauge-settings.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

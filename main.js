@@ -59,6 +59,7 @@ const DEFAULTS = {
   showAntigravity: true,
   displayCurrency: 'USD',
   capsuleWindow: 'auto', // collapsed capsule gauge: 'auto' (highest) | 'five_hour' | 'seven_day'
+  gaugeVisibility: {},   // per-gauge show/hide overrides, { gaugeKey: bool }
   pollMinutes: 3,
   pos: null,             // {x, y}
   panelWidth: WIDTH_EXPANDED, // user-adjustable expanded width
@@ -67,6 +68,19 @@ const ONE_TIME = new Set(['cinder_cove']);
 function isSpecialCategoryKey(key) {
   const normalized = String(key || '').toLowerCase().replace(/[-\s]+/g, '_');
   return !ONE_TIME.has(normalized) && !/^(?:five_hour|seven_day)(?:_|$)/.test(normalized);
+}
+// Mirrors renderer/gauge-settings.js: Antigravity shows only its Claude and
+// Gemini Pro quotas unless the user picks otherwise in settings.
+function gaugeVisibleByDefault(key) {
+  const m = /^antigravity_(.+)$/.exec(key || '');
+  if (!m) return true;
+  return /claude|(?:^|-)pro$/i.test(m[1]);
+}
+function isGaugeVisible(key) {
+  const overrides = settings.gaugeVisibility || {};
+  return Object.prototype.hasOwnProperty.call(overrides, key)
+    ? overrides[key] !== false
+    : gaugeVisibleByDefault(key);
 }
 
 let settings = { ...DEFAULTS };
@@ -467,7 +481,7 @@ function maybeNotify(data, codex, ag) {
   // A stale cache would re-fire warnings for a window that has long since
   // reset, so it never drives notifications.
   if (settings.showAntigravity && ag && !ag.stale) gauges.push(...antigravityGauges(ag));
-  for (const g of gauges) {
+  for (const g of gauges.filter((x) => isGaugeVisible(x.key))) {
     const sev = severityOf(g.utilization);
     const prev = lastSeverity[g.key] || 'normal';
     const rank = { normal: 0, warn: 1, crit: 2 };
@@ -755,6 +769,7 @@ function publicSettings() {
     showAntigravity: settings.showAntigravity,
     displayCurrency: settings.displayCurrency === 'TWD' ? 'TWD' : 'USD',
     capsuleWindow: settings.capsuleWindow,
+    gaugeVisibility: settings.gaugeVisibility || {},
     notify: settings.notify,
     alwaysOnTop: settings.alwaysOnTop,
     openAtLogin: settings.openAtLogin,
@@ -916,8 +931,9 @@ function updateTrayTooltip(data, codex, ag) {
   const gauges = settings.showClaude ? extractGauges(data) : [];
   if (settings.showCodex) gauges.push(...codexGauges(codex));
   if (settings.showAntigravity && ag) gauges.push(...antigravityGauges(ag));
-  if (!gauges.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
-  const top = gauges.reduce((a, b) => (b.utilization > a.utilization ? b : a));
+  const visible = gauges.filter((g) => isGaugeVisible(g.key));
+  if (!visible.length) { tray.setToolTip(APP_DISPLAY_NAME); return; }
+  const top = visible.reduce((a, b) => (b.utilization > a.utilization ? b : a));
   tray.setToolTip(`${APP_DISPLAY_NAME} - 最高用量 ${top.utilization.toFixed(1)}% (${top.key})`);
 }
 
@@ -1066,6 +1082,10 @@ ipcMain.on('set-setting', (_e, { key, value }) => {
       break;
     case 'capsuleWindow':
       settings.capsuleWindow = ['five_hour', 'seven_day'].includes(value) ? value : 'auto';
+      break;
+    case 'gaugeVisibility':
+      if (!value || typeof value.key !== 'string') return;
+      settings.gaugeVisibility = { ...(settings.gaugeVisibility || {}), [value.key]: value.visible !== false };
       break;
     default:
       return;

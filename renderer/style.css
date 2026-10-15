@@ -596,6 +596,158 @@ html, body {
   color: var(--dim);
   font-size: 12px;
 }
+
+/* ---------- Claude usage habits (habits.js) ---------- */
+.habit-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 4px 0 2px;
+}
+.habit-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inner);
+}
+.habit-tile span,
+.habit-tile em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-style: normal;
+}
+.habit-tile strong {
+  color: var(--orange);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.habit-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.habit-title em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 400;
+}
+.habit-stack {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-inner);
+}
+.habit-seg { height: 100%; }
+.habit-seg + .habit-seg { border-left: 1px solid rgba(38, 38, 36, 0.9); }
+.s0 { background: var(--orange); }
+.s1 { background: #E9A98F; }
+.s2 { background: #B5583B; }
+.s3 { background: #F3D2C4; }
+.s4 { background: #7E3F2B; }
+.s5 { background: var(--dim); }
+.c0 { background: #5B5A55; }
+.c1 { background: #F3D2C4; }
+.c2 { background: #E9A98F; }
+.c3 { background: var(--orange); }
+.c4 { background: var(--crit); }
+.habit-legend { padding-top: 4px; }
+.habit-legend div {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 46px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.habit-legend i,
+.habit-chips i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.habit-legend span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.habit-legend strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.habit-legend em {
+  color: var(--dim);
+  font-size: 10.5px;
+  font-style: normal;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.habit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding-top: 6px;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.habit-chips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.habit-note {
+  padding-top: 6px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.habit-hours {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  align-items: end;
+  gap: 2px;
+  height: 46px;
+}
+.habit-hours div {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--bg-inner);
+}
+.habit-hours i {
+  width: 100%;
+  border-radius: 2px;
+  background: rgba(217, 119, 87, 0.5);
+}
+.habit-hours div.peak i { background: var(--orange); }
+.habit-axis {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 3px;
+  color: var(--dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.habit-tools { max-height: none; }
+.habit-tools .insight-row { padding: 5px 0; }
 /* ---------- settings page ---------- */
 .settings { padding: 4px 0 6px; }
 .set-group { padding: 6px 0; }
@@ -685,6 +837,17 @@ html, body {
 .set-toggle input { accent-color: var(--orange); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
 .set-toggle.disabled { opacity: 0.4; cursor: not-allowed; }
 .set-toggle.disabled input { cursor: not-allowed; }
+.set-sublist {
+  margin: 0 0 4px 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.set-subtoggle {
+  padding: 3px 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+.set-subtoggle input { width: 13px; height: 13px; }
 
 .footer {
   display: flex;
